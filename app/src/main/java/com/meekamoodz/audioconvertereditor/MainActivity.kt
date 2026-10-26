@@ -332,7 +332,7 @@ class MainActivity : ComponentActivity() {
     private fun loadAppOpen() {
         AppOpenAd.load(this, "ca-app-pub-1083885756946416/2801153579", AdRequest.Builder().build(),
             object : AppOpenAdLoadCallback() {
-                override fun onAdLoaded(ad: AppOpenAd) { appOpen = ad; showAppOpenIfReady() }
+                override fun onAdLoaded(ad: AppOpenAd) { appOpen = ad }
                 override fun onAdFailedToLoad(error: LoadAdError) { appOpen = null }
             })
     }
