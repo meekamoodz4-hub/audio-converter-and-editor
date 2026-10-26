@@ -581,6 +581,7 @@ class MainActivity : ComponentActivity() {
                         lastSavedUri = saved.first
                         if (pendingExport == file) pendingExport = null
                         status.text = "Saved to Downloads/Audio Converter and Editor: ${saved.second}"
+                        file.delete()
                         toast("Saved: ${saved.second}")
                     }
                 } catch (e: Exception) {
