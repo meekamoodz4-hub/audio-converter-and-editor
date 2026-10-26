@@ -585,10 +585,10 @@ class MainActivity : ComponentActivity() {
                     }
                 } catch (e: Exception) {
                     runOnUiThread {
-                        status.text = "Could not save file: ${e.message ?: "Storage error"}"
+                        status.text = "Could not save file: ${e.message ?: "Storage error"}. Your export is still available."
                         showPendingSaveDialog(file.name)
                     }
-                } finally { file.delete() }
+                }
             }.start()
         }
     }
