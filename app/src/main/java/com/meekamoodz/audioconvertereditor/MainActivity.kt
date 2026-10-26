@@ -375,7 +375,6 @@ class MainActivity : ComponentActivity() {
                 } else showSaveSettingsDialog()
             }, buttonParams())
         }
-        body.addView(button("SAVE EXPORTED FILE  •  WATCH REWARDED AD", green) { savePendingExport() }, buttonParams())
         body.addView(button("PLAY LAST SAVED FILE", panel2) { playLast() }, buttonParams())
         status = TextView(this).apply {
             text = "Choose a file to begin."
@@ -503,8 +502,9 @@ class MainActivity : ComponentActivity() {
                     runOnUiThread {
                         pendingExport?.delete()
                         pendingExport = output
-                        status.text = "Export ready: $fileName.$ext. Tap Save and complete the rewarded ad."
-                        toast("Conversion complete. Tap Save to finish.")
+                        status.text = "Export ready: $fileName.$ext. Save from the popup to finish."
+                        toast("Conversion complete. Your Save File popup is ready.")
+                        showPendingSaveDialog("$fileName.$ext")
                     }
                 } else {
                     output.delete()
@@ -517,20 +517,39 @@ class MainActivity : ComponentActivity() {
         }.start()
     }
 
+    private fun showPendingSaveDialog(fileLabelText: String = "Your exported audio") {
+        val file = pendingExport
+        if (file == null || !file.exists() || file.length() <= 0L) return
+        AlertDialog.Builder(this)
+            .setTitle("Your export is ready")
+            .setMessage("$fileLabelText is ready. Tap SAVE FILE and complete the rewarded ad to save it to Downloads/Audio Converter and Editor. Your file will not be saved unless the reward is earned.")
+            .setPositiveButton("SAVE FILE") { _, _ -> savePendingExport() }
+            .setNegativeButton("LATER", null)
+            .show()
+            .apply {
+                getButton(AlertDialog.BUTTON_POSITIVE).setTextColor(blue)
+                getButton(AlertDialog.BUTTON_NEGATIVE).setTextColor(Color.LTGRAY)
+            }
+    }
+
     private fun savePendingExport() {
         val file = pendingExport
         if (file == null || !file.exists() || file.length() <= 0L) {
-            toast("Convert a file first, then tap Save.")
+            toast("Convert a file first, then use Save File.")
             return
         }
         val ad = rewarded
         if (ad == null) {
-            status.text = "Rewarded ad is loading. Your export is still ready; try Save again shortly."
-            toast("Ad not ready. File has not been saved.")
+            status.text = "Your export is safe and ready. The rewarded ad is loading."
             loadRewarded()
+            AlertDialog.Builder(this)
+                .setTitle("Ad is loading")
+                .setMessage("Your export has not been deleted. Wait a moment, then tap TRY AGAIN to load the rewarded ad and save your file.")
+                .setPositiveButton("TRY AGAIN") { _, _ -> savePendingExport() }
+                .setNegativeButton("CANCEL", null)
+                .show()
             return
         }
-        pendingExport = null
         rewardAndSave(file, ad)
     }
 
@@ -541,14 +560,16 @@ class MainActivity : ComponentActivity() {
             override fun onAdDismissedFullScreenContent() {
                 loadRewarded()
                 if (!earned) {
-                    status.text = "Ad not completed. File was not saved."
+                    status.text = "Ad not completed. Your export is still ready and was not saved."
                     toast("Complete the rewarded ad to save.")
+                    showPendingSaveDialog(file.name)
                 }
             }
             override fun onAdFailedToShowFullScreenContent(error: AdError) {
                 loadRewarded()
-                status.text = "Ad could not be shown. Please convert again and retry."
-                file.delete()
+                status.text = "Ad could not be shown. Your export is still ready."
+                toast("Ad could not be shown. Try Save File again shortly.")
+                showPendingSaveDialog(file.name)
             }
         }
         ad.show(this) {
@@ -558,11 +579,15 @@ class MainActivity : ComponentActivity() {
                     val saved = saveDownload(file, pendingOutputName)
                     runOnUiThread {
                         lastSavedUri = saved.first
+                        if (pendingExport == file) pendingExport = null
                         status.text = "Saved to Downloads/Audio Converter and Editor: ${saved.second}"
                         toast("Saved: ${saved.second}")
                     }
                 } catch (e: Exception) {
-                    runOnUiThread { status.text = "Could not save file: ${e.message ?: "Storage error"}" }
+                    runOnUiThread {
+                        status.text = "Could not save file: ${e.message ?: "Storage error"}"
+                        showPendingSaveDialog(file.name)
+                    }
                 } finally { file.delete() }
             }.start()
         }
