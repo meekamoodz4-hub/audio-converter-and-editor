@@ -18,7 +18,6 @@ import com.arthenica.ffmpegkit.FFmpegKit
 import com.arthenica.ffmpegkit.ReturnCode
 import com.google.android.gms.ads.*
 import com.google.android.gms.ads.appopen.AppOpenAd
-import com.google.android.gms.ads.appopen.AppOpenAdLoadCallback
 import com.google.android.gms.ads.interstitial.InterstitialAd
 import com.google.android.gms.ads.interstitial.InterstitialAdLoadCallback
 import com.google.android.gms.ads.rewarded.RewardedAd
@@ -331,7 +330,7 @@ class MainActivity : ComponentActivity() {
 
     private fun loadAppOpen() {
         AppOpenAd.load(this, "ca-app-pub-1083885756946416/2801153579", AdRequest.Builder().build(),
-            object : AppOpenAdLoadCallback() {
+            object : AppOpenAd.AppOpenAdLoadCallback() {
                 override fun onAdLoaded(ad: AppOpenAd) { appOpen = ad }
                 override fun onAdFailedToLoad(error: LoadAdError) { appOpen = null }
             })
