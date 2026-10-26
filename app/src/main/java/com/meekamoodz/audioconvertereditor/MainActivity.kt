@@ -144,6 +144,7 @@ class MainActivity : ComponentActivity() {
     private var appOpen: AppOpenAd? = null
     private var lastInterstitialAt = 0L
     private var lastSavedUri: Uri? = null
+    private var pendingExport: File? = null
     private var player: MediaPlayer? = null
     private var showingAppOpen = false
 
@@ -241,7 +242,8 @@ class MainActivity : ComponentActivity() {
         body.addView(button("CONVERT / EXTRACT AUDIO", purple) { process(false, false) }, buttonParams())
         body.addView(button("CROP AUDIO", blue) { process(true, false) }, buttonParams())
         body.addView(button("COMPRESS AUDIO", purple) { process(false, true) }, buttonParams())
-        body.addView(button("PLAY LAST EXPORTED FILE", Color.rgb(70, 70, 95)) { playLast() }, buttonParams())
+        body.addView(button("SAVE EXPORTED FILE • WATCH REWARDED AD", Color.rgb(22, 163, 74)) { savePendingExport() }, buttonParams())
+        body.addView(button("PLAY LAST SAVED FILE", Color.rgb(70, 70, 95)) { playLast() }, buttonParams())
         body.addView(button("PRIVACY POLICY", Color.rgb(70, 70, 95)) {
             startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://sites.google.com/view/droptechdevelopers/audio-converter-and-editor-button?authuser=1")))
         }, buttonParams())
@@ -254,7 +256,7 @@ class MainActivity : ComponentActivity() {
         }
         body.addView(status, matchWrap())
         body.addView(TextView(this).apply {
-            text = "Exporting requires completing a rewarded ad. Files are processed on your device."
+            text = "Create an export, then tap Save and complete the rewarded ad. Each saved export requires its own rewarded ad."
             textSize = 12f
             setTextColor(Color.LTGRAY)
             gravity = Gravity.CENTER
@@ -378,8 +380,10 @@ class MainActivity : ComponentActivity() {
                 val session = FFmpegKit.execute(command)
                 if (ReturnCode.isSuccess(session.returnCode) && output.exists() && output.length() > 0) {
                     runOnUiThread {
-                        status.text = "Processing complete. Complete the rewarded ad to save."
-                        rewardAndSave(output)
+                        pendingExport?.delete()
+                        pendingExport = output
+                        status.text = "Export ready: ${output.name}. Tap SAVE EXPORTED FILE to watch a rewarded ad and save it."
+                        toast("Export ready. Tap Save when you want to save this file.")
                     }
                 } else {
                     output.delete()
@@ -394,15 +398,24 @@ class MainActivity : ComponentActivity() {
         }.start()
     }
 
-    private fun rewardAndSave(file: File) {
+    private fun savePendingExport() {
+        val file = pendingExport
+        if (file == null || !file.exists() || file.length() <= 0L) {
+            toast("Create an export first, then tap Save.")
+            return
+        }
         val ad = rewarded
         if (ad == null) {
-            file.delete()
-            status.text = "Rewarded ad is loading. Try exporting again in a moment."
-            toast("Ad not ready. The file was not saved; please retry.")
+            status.text = "Rewarded ad is loading. Your export is kept ready; try Save again shortly."
+            toast("Ad not ready yet. Your export has not been saved.")
             loadRewarded()
             return
         }
+        pendingExport = null
+        rewardAndSave(file, ad)
+    }
+
+    private fun rewardAndSave(file: File, ad: RewardedAd) {
         rewarded = null
         var earned = false
         ad.fullScreenContentCallback = object : FullScreenContentCallback() {
@@ -565,6 +578,8 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         player?.release()
         player = null
+        pendingExport?.delete()
+        pendingExport = null
         if (::banner.isInitialized) banner.destroy()
         super.onDestroy()
     }
