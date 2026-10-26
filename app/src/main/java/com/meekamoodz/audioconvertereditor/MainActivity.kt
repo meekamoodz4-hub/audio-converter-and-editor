@@ -411,7 +411,7 @@ class MainActivity : ComponentActivity() {
         card.addView(playerSeek, matchWrap())
         val controls = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
         controls.addView(button("− 5s", panel2) { jumpPlayer(-5000) }, LinearLayout.LayoutParams(0, dp(46), 1f).apply { marginEnd = dp(4) })
-        controls.addView(button("▶ / ❚❚", blue) { togglePlayer() }, LinearLayout.LayoutParams(0, dp(46), 1f).apply { marginHorizontal = dp(4) })
+        controls.addView(button("▶ / ❚❚", blue) { togglePlayer() }, LinearLayout.LayoutParams(0, dp(46), 1f).apply { marginStart = dp(4); marginEnd = dp(4) })
         controls.addView(button("+ 5s", panel2) { jumpPlayer(5000) }, LinearLayout.LayoutParams(0, dp(46), 1f).apply { marginStart = dp(4) })
         card.addView(controls, matchWrap())
         parent.addView(card, matchWrap())
