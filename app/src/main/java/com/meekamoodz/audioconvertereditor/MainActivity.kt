@@ -4,6 +4,10 @@ import android.app.Activity
 import android.content.ContentValues
 import android.content.Intent
 import android.graphics.Color
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.view.MotionEvent
+import android.view.View
 import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Build
@@ -27,6 +31,99 @@ import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.util.Locale
 
+private class AudioWaveformView(context: android.content.Context) : View(context) {
+    private val barPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val selectedPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val handlePaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private var levels: List<Float> = emptyList()
+    private var durationSeconds = 0.0
+    private var startSeconds = 0.0
+    private var endSeconds = 0.0
+    private var dragStart = false
+    var onSelectionChanged: ((Double, Double) -> Unit)? = null
+
+    init {
+        barPaint.color = Color.rgb(91, 83, 135)
+        selectedPaint.color = Color.rgb(139, 92, 246)
+        handlePaint.color = Color.rgb(59, 130, 246)
+        textPaint.color = Color.WHITE
+        textPaint.textSize = 26f
+    }
+
+    fun setWaveform(values: List<Float>, duration: Double) {
+        levels = values
+        durationSeconds = duration.coerceAtLeast(0.01)
+        startSeconds = 0.0
+        endSeconds = durationSeconds
+        invalidate()
+        onSelectionChanged?.invoke(startSeconds, endSeconds)
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        super.onDraw(canvas)
+        val w = width.toFloat()
+        val h = height.toFloat()
+        if (w <= 0f || h <= 0f) return
+        canvas.drawColor(Color.rgb(9, 8, 25))
+        if (levels.isEmpty()) {
+            textPaint.textAlign = Paint.Align.CENTER
+            canvas.drawText("Select a file to load waveform", w / 2f, h / 2f, textPaint)
+            return
+        }
+        val sx = (startSeconds / durationSeconds).toFloat().coerceIn(0f, 1f) * w
+        val ex = (endSeconds / durationSeconds).toFloat().coerceIn(0f, 1f) * w
+        canvas.drawRect(sx, 0f, ex, h, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(45, 59, 130, 246) })
+        val step = w / levels.size.coerceAtLeast(1)
+        val barWidth = (step * 0.58f).coerceAtLeast(1f)
+        levels.forEachIndexed { index, level ->
+            val x = index * step + (step - barWidth) / 2f
+            val barH = (level.coerceIn(0.025f, 1f) * h * 0.82f).coerceAtLeast(3f)
+            barPaint.color = if (x >= sx && x <= ex) Color.rgb(139, 92, 246) else Color.rgb(78, 78, 120)
+            canvas.drawRoundRect(x, (h - barH) / 2f, x + barWidth, (h + barH) / 2f, barWidth / 2f, barWidth / 2f, barPaint)
+        }
+        handlePaint.color = Color.rgb(59, 130, 246)
+        canvas.drawRoundRect(sx - 3f, 0f, sx + 3f, h, 3f, 3f, handlePaint)
+        handlePaint.color = Color.rgb(217, 70, 239)
+        canvas.drawRoundRect(ex - 3f, 0f, ex + 3f, h, 3f, 3f, handlePaint)
+        canvas.drawCircle(sx, h * 0.13f, 9f, handlePaint)
+        canvas.drawCircle(ex, h * 0.13f, 9f, handlePaint)
+    }
+
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        if (durationSeconds <= 0.0 || width <= 0) return false
+        val x = event.x.coerceIn(0f, width.toFloat())
+        when (event.action) {
+            MotionEvent.ACTION_DOWN -> {
+                val startX = (startSeconds / durationSeconds).toFloat() * width
+                val endX = (endSeconds / durationSeconds).toFloat() * width
+                dragStart = kotlin.math.abs(x - startX) <= kotlin.math.abs(x - endX)
+                parent?.requestDisallowInterceptTouchEvent(true)
+                updateFromX(x)
+                return true
+            }
+            MotionEvent.ACTION_MOVE -> { updateFromX(x); return true }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                updateFromX(x)
+                parent?.requestDisallowInterceptTouchEvent(false)
+                performClick()
+                return true
+            }
+        }
+        return true
+    }
+
+    private fun updateFromX(x: Float) {
+        val seconds = (x / width.toFloat()).coerceIn(0f, 1f) * durationSeconds
+        if (dragStart) startSeconds = seconds.coerceAtMost(endSeconds - 0.05).coerceAtLeast(0.0)
+        else endSeconds = seconds.coerceAtLeast(startSeconds + 0.05).coerceAtMost(durationSeconds)
+        invalidate()
+        onSelectionChanged?.invoke(startSeconds, endSeconds)
+    }
+
+    override fun performClick(): Boolean { super.performClick(); return true }
+}
+
 class MainActivity : ComponentActivity() {
     private val purple = Color.rgb(139, 92, 246)
     private val bg = Color.rgb(16, 11, 34)
@@ -38,6 +135,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var bitrate: Spinner
     private lateinit var startTime: EditText
     private lateinit var endTime: EditText
+    private lateinit var waveform: AudioWaveformView
     private lateinit var banner: AdView
     private var selectedUri: Uri? = null
     private var selectedName = "media"
@@ -54,8 +152,9 @@ class MainActivity : ComponentActivity() {
             selectedUri = uri
             selectedName = queryName(uri) ?: "selected_media"
             fileLabel.text = "Selected: $selectedName"
-            status.text = "Ready. Choose an action below."
+            status.text = "Loading audio waveform…"
             try { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) {}
+            loadWaveform(uri)
         }
     }
 
@@ -124,6 +223,21 @@ class MainActivity : ComponentActivity() {
         times.addView(startTime, LinearLayout.LayoutParams(0, dp(50), 1f).apply { marginEnd = dp(5) })
         times.addView(endTime, LinearLayout.LayoutParams(0, dp(50), 1f).apply { marginStart = dp(5) })
         body.addView(times, matchWrap())
+        section(body, "WAVEFORM CROP EDITOR")
+        body.addView(TextView(this).apply {
+            text = "Drag the purple handles to choose the part to keep."
+            textSize = 12f
+            setTextColor(Color.LTGRAY)
+            setPadding(0, 0, 0, dp(6))
+        }, matchWrap())
+        waveform = AudioWaveformView(this).apply {
+            setBackgroundColor(Color.rgb(9, 8, 25))
+            onSelectionChanged = { start, end ->
+                startTime.setText(String.format(Locale.US, "%.2f", start))
+                endTime.setText(String.format(Locale.US, "%.2f", end))
+            }
+        }
+        body.addView(waveform, LinearLayout.LayoutParams(-1, dp(150)).apply { topMargin = dp(4); bottomMargin = dp(8) })
         body.addView(button("CONVERT / EXTRACT AUDIO", purple) { process(false, false) }, buttonParams())
         body.addView(button("CROP AUDIO", blue) { process(true, false) }, buttonParams())
         body.addView(button("COMPRESS AUDIO", purple) { process(false, true) }, buttonParams())
@@ -154,6 +268,55 @@ class MainActivity : ComponentActivity() {
         }
         root.addView(banner, LinearLayout.LayoutParams(-1, -2))
         setContentView(root)
+    }
+
+    private fun loadWaveform(uri: Uri) {
+        Thread {
+            val input = File(cacheDir, "wave_in_${System.currentTimeMillis()}.media")
+            val pcm = File(cacheDir, "wave_out_${System.currentTimeMillis()}.pcm")
+            try {
+                contentResolver.openInputStream(uri).use { stream ->
+                    requireNotNull(stream) { "Could not open selected file." }
+                    FileOutputStream(input).use { stream.copyTo(it) }
+                }
+                val command = listOf("-y", "-i", input.absolutePath, "-vn", "-ac", "1", "-ar", "8000", "-f", "s16le", pcm.absolutePath)
+                    .joinToString(" ") { quote(it) }
+                val session = FFmpegKit.execute(command)
+                if (!ReturnCode.isSuccess(session.returnCode) || !pcm.exists() || pcm.length() < 2L) {
+                    runOnUiThread { status.text = "Waveform unavailable for this file. You can still enter crop times." }
+                    return@Thread
+                }
+                val bytes = pcm.readBytes()
+                val totalSamples = bytes.size / 2
+                val samplesPerBar = maxOf(1, totalSamples / 180)
+                val levels = ArrayList<Float>()
+                var i = 0
+                while (i < totalSamples) {
+                    var peak = 0
+                    val stop = minOf(totalSamples, i + samplesPerBar)
+                    var j = i
+                    while (j < stop) {
+                        val raw = ((bytes[j * 2 + 1].toInt() shl 8) or (bytes[j * 2].toInt() and 0xff)).toShort().toInt()
+                        peak = maxOf(peak, kotlin.math.abs(raw))
+                        j++
+                    }
+                    levels.add(peak / 32768f)
+                    i = stop
+                }
+                val duration = totalSamples / 8000.0
+                runOnUiThread {
+                    waveform.setWaveform(levels, duration)
+                    startTime.setText("0.00")
+                    endTime.setText(String.format(Locale.US, "%.2f", duration))
+                    status.text = "Waveform ready. Drag the handles to select your crop."
+                }
+            } catch (e: Exception) {
+                runOnUiThread { status.text = "Could not build waveform. You can still enter crop times." }
+            } finally {
+                input.delete()
+                pcm.delete()
+            }
+        }.start()
     }
 
     private fun chooseFile() {
