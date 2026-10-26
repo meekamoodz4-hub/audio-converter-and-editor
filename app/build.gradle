@@ -31,6 +31,7 @@ android {
 }
 
 dependencies {
+    implementation 'androidx.activity:activity-ktx:1.10.1'
     implementation 'com.google.android.gms:play-services-ads:25.5.0'
     implementation 'dev.ffmpegkit-maintained:ffmpeg-kit-full:8.1.9'
 }
