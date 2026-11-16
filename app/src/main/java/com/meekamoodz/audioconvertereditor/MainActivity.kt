@@ -176,6 +176,20 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private var selectedTrackUris: List<Uri> = emptyList()
+    private val multiPicker = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        if (uris.isNotEmpty()) {
+            selectedTrackUris = uris
+            selectedUri = uris.first()
+            selectedName = queryName(uris.first()) ?: "audio_tracks"
+            if (::fileLabel.isInitialized) fileLabel.text = "${uris.size} tracks selected"
+            if (::status.isInitialized) status.text = "Selected ${uris.size} tracks. Choose export settings to continue."
+            uris.forEach { uri ->
+                try { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) {}
+            }
+        }
+    }
+
     private val tick = object : Runnable {
         override fun run() {
             val p = player
@@ -433,7 +447,13 @@ class MainActivity : ComponentActivity() {
             background = rounded(panel, 14)
         }
         body.addView(fileLabel, matchWrap())
-        body.addView(button("＋  SELECT AUDIO OR VIDEO", blue) { chooseFile() }, buttonParams())
+        if (tool == "merge" || tool == "mix") {
+            body.addView(button("＋  SELECT MULTIPLE TRACKS", blue) {
+                multiPicker.launch(arrayOf("audio/*"))
+            }, buttonParams())
+        } else {
+            body.addView(button("＋  SELECT AUDIO OR VIDEO", blue) { chooseFile() }, buttonParams())
+        }
         if (tool == "trim" || tool == "split" || tool == "ringtone") {
             section(body, if (tool == "ringtone") "RINGTONE LENGTH" else "TRIM RANGE")
             val times = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
@@ -504,7 +524,8 @@ class MainActivity : ComponentActivity() {
                     else -> "CONVERT"
                 }, purple) {
                 if (tool == "merge" || tool == "mix") {
-                    toast("Multi-file track selection and mixing are being added in the next upgrade step.")
+                    if (selectedTrackUris.size < 2) toast("Select at least two audio tracks first.")
+                    else showSaveSettingsDialog()
                 } else showSaveSettingsDialog()
             }, buttonParams())
         }
@@ -604,12 +625,27 @@ class MainActivity : ComponentActivity() {
         status.text = "Preparing your export…"
         Thread {
             try {
-                contentResolver.openInputStream(uri).use { stream ->
-                    requireNotNull(stream) { "Could not open selected file." }
-                    FileOutputStream(input).use { stream.copyTo(it) }
+                val trackInputs = mutableListOf<File>()
+                if (tool == "merge" || tool == "mix") {
+                    if (selectedTrackUris.size < 2) error("Select at least two tracks.")
+                    selectedTrackUris.forEachIndexed { index, trackUri ->
+                        val trackFile = File(cacheDir, "track_${System.currentTimeMillis()}_${index}.media")
+                        contentResolver.openInputStream(trackUri).use { stream ->
+                            requireNotNull(stream) { "Could not open one of the selected tracks." }
+                            FileOutputStream(trackFile).use { stream.copyTo(it) }
+                        }
+                        trackInputs.add(trackFile)
+                    }
+                } else {
+                    contentResolver.openInputStream(uri).use { stream ->
+                        requireNotNull(stream) { "Could not open selected file." }
+                        FileOutputStream(input).use { stream.copyTo(it) }
+                    }
                 }
                 val args = mutableListOf("-y")
-                if (tool == "trim" || tool == "split" || tool == "ringtone") {
+                if (tool == "merge" || tool == "mix") {
+                    trackInputs.forEach { args.addAll(listOf("-i", it.absolutePath)) }
+                } else if (tool == "trim" || tool == "split" || tool == "ringtone") {
                     val start = if (::startTime.isInitialized) startTime.text.toString().toDoubleOrNull() ?: 0.0 else 0.0
                     val end = if (::endTime.isInitialized) endTime.text.toString().toDoubleOrNull() else null
                     if (start < 0 || end == null || end <= start) {
@@ -618,8 +654,8 @@ class MainActivity : ComponentActivity() {
                         return@Thread
                     }
                     args.addAll(listOf("-ss", start.toString(), "-i", input.absolutePath, "-t", (end - start).toString()))
-                } else args.addAll(listOf("-i", input.absolutePath))
-                args.addAll(listOf("-vn"))
+                } else if (tool != "merge" && tool != "mix") args.addAll(listOf("-i", input.absolutePath))
+                if (tool != "merge" && tool != "mix") args.addAll(listOf("-vn"))
                 when (ext) {
                     "mp3" -> args.addAll(listOf("-codec:a", "libmp3lame", "-b:a", kbps))
                     "wav" -> args.addAll(listOf("-codec:a", "pcm_s16le"))
@@ -645,7 +681,12 @@ class MainActivity : ComponentActivity() {
                         "Soft" -> filters.add("lowpass=f=12000")
                     }
                 }
-                if (filters.isNotEmpty()) args.addAll(listOf("-af", filters.joinToString(",")))
+                if (tool == "merge" || tool == "mix") {
+                    val inputs = trackInputs.indices.joinToString("") { "[$it:a]" }
+                    val filter = if (tool == "merge") "${inputs}concat=n=${trackInputs.size}:v=0:a=1[outa]"
+                        else "${inputs}amix=inputs=${trackInputs.size}:duration=longest:dropout_transition=2[outa]"
+                    args.addAll(listOf("-filter_complex", filter, "-map", "[outa]"))
+                } else if (filters.isNotEmpty()) args.addAll(listOf("-af", filters.joinToString(",")))
                 args.add(output.absolutePath)
                 runOnUiThread { status.text = "Converting… please keep the app open." }
                 val session = FFmpegKit.execute(args.joinToString(" ") { quote(it) })
@@ -664,7 +705,10 @@ class MainActivity : ComponentActivity() {
             } catch (e: Exception) {
                 output.delete()
                 runOnUiThread { status.text = "Error: ${e.message ?: "Could not read this file."}" }
-            } finally { input.delete() }
+            } finally {
+                input.delete()
+                trackInputs.forEach { it.delete() }
+            }
         }.start()
     }
 
