@@ -297,8 +297,7 @@ class MainActivity : ComponentActivity() {
                 showHome()
                 showAppOpenIfReady()
             }
-        }, 1900L)
-    }
+        }, 1900L)    }
 
     private fun showHome() {
         activeTool = "home"
@@ -597,8 +596,7 @@ class MainActivity : ComponentActivity() {
         form.addView(qualitySpinner, matchWrap())
         val dialog = AlertDialog.Builder(this)
             .setTitle("Save as")
-            .setView(form)
-            .setNegativeButton("CANCEL", null)
+            .setView(form)            .setNegativeButton("CANCEL", null)
             .setPositiveButton("CONVERT", null)
             .create()
         dialog.setOnShowListener {
@@ -623,9 +621,9 @@ class MainActivity : ComponentActivity() {
         val output = File(cacheDir, "export_${System.currentTimeMillis()}.$ext")
         pendingOutputName = fileName
         status.text = "Preparing your export…"
+        val trackInputs = mutableListOf<File>()
         Thread {
             try {
-                val trackInputs = mutableListOf<File>()
                 if (tool == "merge" || tool == "mix") {
                     if (selectedTrackUris.size < 2) error("Select at least two tracks.")
                     selectedTrackUris.forEachIndexed { index, trackUri ->
@@ -897,8 +895,7 @@ class MainActivity : ComponentActivity() {
                     if (::playerTime.isInitialized) playerTime.text = "00:00 / ${timeText(mp.duration)}"
                     if (::status.isInitialized) status.text = "Player ready. Press play to listen."
                 }
-                setOnCompletionListener { mp ->
-                    if (::status.isInitialized) status.text = "Playback finished."
+                setOnCompletionListener { mp ->                    if (::status.isInitialized) status.text = "Playback finished."
                     try { mp.seekTo(0); if (::playerSeek.isInitialized) playerSeek.progress = 0 } catch (_: Exception) {}
                 }
                 prepareAsync()
