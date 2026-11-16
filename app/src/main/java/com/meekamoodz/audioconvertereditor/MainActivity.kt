@@ -161,6 +161,8 @@ class MainActivity : ComponentActivity() {
     private val handler = Handler(Looper.getMainLooper())
     private var updatingSeek = false
     private var lastDurationMs = 0
+    private var selectedVoiceEffect = "Normal"
+    private var equalizerPreset = "Balanced"
 
     private val picker = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == Activity.RESULT_OK) result.data?.data?.let { uri ->
@@ -325,6 +327,15 @@ class MainActivity : ComponentActivity() {
             Triple("Ⅱ", "Split Audio", "split")
         )
         addTileGrid(body, second)
+        section(body, "STUDIO EFFECTS")
+        addTileGrid(body, listOf(
+            Triple("🎙", "Voice Changer", "voice"),
+            Triple("♫", "Equalizer", "equalizer"),
+            Triple("☎", "Ringtone Maker", "ringtone"),
+            Triple("⇄", "Multi-track Mixer", "mix")
+        ))
+        section(body, "MORE TOOLS")
+        addTileGrid(body, listOf(Triple("＋", "Audio Merger", "merge")))
         section(body, "YOUR FILES")
         body.addView(button("OUTPUTS  •  SAVED AUDIO", panel2) { showOutputs() }, buttonParams())
         body.addView(button("PRIVACY POLICY", panel2) {
@@ -404,7 +415,10 @@ class MainActivity : ComponentActivity() {
                 "compress" -> "Create a smaller audio file with your chosen quality."
                 "volume" -> "Increase the audio volume before exporting."
                 "merge" -> "Choose an audio file to prepare for a merge workflow."
-                "mix" -> "Choose an audio file to prepare for a mix workflow."
+                "mix" -> "Prepare a multi-track mix from your audio tracks."
+                "voice" -> "Change the character of a voice with selectable audio effects."
+                "equalizer" -> "Shape the sound with a quick equalizer preset."
+                "ringtone" -> "Select a short section and export it as a ringtone."
                 else -> "Edit your audio."
             }
             textSize = 14f
@@ -420,8 +434,8 @@ class MainActivity : ComponentActivity() {
         }
         body.addView(fileLabel, matchWrap())
         body.addView(button("＋  SELECT AUDIO OR VIDEO", blue) { chooseFile() }, buttonParams())
-        if (tool == "trim" || tool == "split") {
-            section(body, "TRIM RANGE")
+        if (tool == "trim" || tool == "split" || tool == "ringtone") {
+            section(body, if (tool == "ringtone") "RINGTONE LENGTH" else "TRIM RANGE")
             val times = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
             startTime = edit("Start (seconds)")
             endTime = edit("End (seconds)")
@@ -438,6 +452,34 @@ class MainActivity : ComponentActivity() {
         }
         section(body, "PLAYER")
         addPlayer(body)
+        if (tool == "voice") {
+            section(body, "VOICE EFFECT")
+            val effects = Spinner(this).apply {
+                adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item,
+                    listOf("Normal", "Deep Voice", "High Pitch", "Robot", "Echo"))
+                onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+                    override fun onNothingSelected(parent: AdapterView<*>?) {}
+                    override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                        selectedVoiceEffect = listOf("Normal", "Deep Voice", "High Pitch", "Robot", "Echo")[position]
+                    }
+                }
+            }
+            body.addView(effects, matchWrap())
+        }
+        if (tool == "equalizer") {
+            section(body, "EQUALIZER PRESET")
+            val presets = Spinner(this).apply {
+                adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item,
+                    listOf("Balanced", "Bass Boost", "Treble Boost", "Vocal", "Soft"))
+                onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+                    override fun onNothingSelected(parent: AdapterView<*>?) {}
+                    override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                        equalizerPreset = listOf("Balanced", "Bass Boost", "Treble Boost", "Vocal", "Soft")[position]
+                    }
+                }
+            }
+            body.addView(presets, matchWrap())
+        }
         if (tool == "volume") {
             section(body, "VOLUME BOOST")
             val volume = SeekBar(this).apply { max = 300; progress = 150 }
@@ -451,9 +493,18 @@ class MainActivity : ComponentActivity() {
             body.addView(volume, matchWrap())
             body.addView(button("CONVERT", purple) { showSaveSettingsDialog(volume.progress) }, buttonParams())
         } else {
-            body.addView(button(if (tool == "trim" || tool == "split") "CONVERT SELECTED SECTION" else "CONVERT", purple) {
+            body.addView(button(
+                when (tool) {
+                    "trim", "split" -> "EXPORT SELECTED SECTION"
+                    "ringtone" -> "CREATE RINGTONE"
+                    "voice" -> "APPLY VOICE EFFECT"
+                    "equalizer" -> "APPLY EQUALIZER"
+                    "merge" -> "SELECT TRACKS TO MERGE"
+                    "mix" -> "SELECT TRACKS TO MIX"
+                    else -> "CONVERT"
+                }, purple) {
                 if (tool == "merge" || tool == "mix") {
-                    toast("This tool needs a second audio file. Choose another tool for now.")
+                    toast("Multi-file track selection and mixing are being added in the next upgrade step.")
                 } else showSaveSettingsDialog()
             }, buttonParams())
         }
@@ -558,7 +609,7 @@ class MainActivity : ComponentActivity() {
                     FileOutputStream(input).use { stream.copyTo(it) }
                 }
                 val args = mutableListOf("-y")
-                if (tool == "trim" || tool == "split") {
+                if (tool == "trim" || tool == "split" || tool == "ringtone") {
                     val start = if (::startTime.isInitialized) startTime.text.toString().toDoubleOrNull() ?: 0.0 else 0.0
                     val end = if (::endTime.isInitialized) endTime.text.toString().toDoubleOrNull() else null
                     if (start < 0 || end == null || end <= start) {
@@ -576,7 +627,25 @@ class MainActivity : ComponentActivity() {
                     "flac" -> args.addAll(listOf("-codec:a", "flac"))
                 }
                 if (tool == "compress") args.addAll(listOf("-ac", "2", "-ar", "44100"))
-                if (tool == "volume") args.addAll(listOf("-af", "volume=${(volumePercent.coerceAtLeast(10) / 100.0)}"))
+                val filters = mutableListOf<String>()
+                if (tool == "volume") filters.add("volume=${(volumePercent.coerceAtLeast(10) / 100.0)}")
+                if (tool == "voice") {
+                    when (selectedVoiceEffect) {
+                        "Deep Voice" -> filters.add("asetrate=44100*0.82,aresample=44100")
+                        "High Pitch" -> filters.add("asetrate=44100*1.22,aresample=44100")
+                        "Robot" -> filters.add("aecho=0.8:0.88:60:0.4")
+                        "Echo" -> filters.add("aecho=0.8:0.7:900:0.35")
+                    }
+                }
+                if (tool == "equalizer") {
+                    when (equalizerPreset) {
+                        "Bass Boost" -> filters.add("equalizer=f=100:width_type=o:width=2:g=8")
+                        "Treble Boost" -> filters.add("equalizer=f=6000:width_type=o:width=2:g=5")
+                        "Vocal" -> filters.add("equalizer=f=2500:width_type=o:width=1:g=4")
+                        "Soft" -> filters.add("lowpass=f=12000")
+                    }
+                }
+                if (filters.isNotEmpty()) args.addAll(listOf("-af", filters.joinToString(",")))
                 args.add(output.absolutePath)
                 runOnUiThread { status.text = "Converting… please keep the app open." }
                 val session = FFmpegKit.execute(args.joinToString(" ") { quote(it) })
