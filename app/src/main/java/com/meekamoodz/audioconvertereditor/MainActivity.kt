@@ -162,7 +162,8 @@ class MainActivity : ComponentActivity() {
     private var updatingSeek = false
     private var lastDurationMs = 0
     private var selectedVoiceEffect = "Normal"
-    private var equalizerPreset = "Balanced"
+    private var equalizerPreset = "Flat"
+    private val equalizerGains = MutableList(10) { 0 }
 
     private val picker = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == Activity.RESULT_OK) result.data?.data?.let { uri ->
@@ -173,20 +174,6 @@ class MainActivity : ComponentActivity() {
             try { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) {}
             if (::waveform.isInitialized) loadWaveform(uri)
             preparePlayer(uri)
-        }
-    }
-
-    private var selectedTrackUris: List<Uri> = emptyList()
-    private val multiPicker = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
-        if (uris.isNotEmpty()) {
-            selectedTrackUris = uris
-            selectedUri = uris.first()
-            selectedName = queryName(uris.first()) ?: "audio_tracks"
-            if (::fileLabel.isInitialized) fileLabel.text = "${uris.size} tracks selected"
-            if (::status.isInitialized) status.text = "Selected ${uris.size} tracks. Choose export settings to continue."
-            uris.forEach { uri ->
-                try { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) {}
-            }
         }
     }
 
@@ -327,8 +314,7 @@ class MainActivity : ComponentActivity() {
         section(body, "AUDIO EDITOR")
         val first = listOf(
             Triple("✂", "Trim Audio", "trim"),
-            Triple("◖))", "Volume Booster", "volume"),
-            Triple("⇄", "Audio Merger", "merge")
+            Triple("◖))", "Volume Booster", "volume")
         )
         addTileGrid(body, first)
         section(body, "AUDIO PROCESSING")
@@ -423,7 +409,6 @@ class MainActivity : ComponentActivity() {
                 "trim", "split" -> "Choose the section of audio you want to keep."
                 "compress" -> "Create a smaller audio file with your chosen quality."
                 "volume" -> "Increase the audio volume before exporting."
-                "merge" -> "Join two or more audio files into one continuous audio track."
                 "voice" -> "Change the character of a voice with selectable audio effects."
                 "equalizer" -> "Shape the sound with a quick equalizer preset."
                 "ringtone" -> "Select a short section and export it as a ringtone."
@@ -441,13 +426,7 @@ class MainActivity : ComponentActivity() {
             background = rounded(panel, 14)
         }
         body.addView(fileLabel, matchWrap())
-        if (tool == "merge") {
-            body.addView(button("＋  SELECT 2 OR MORE AUDIO FILES", blue) {
-                multiPicker.launch(arrayOf("audio/*"))
-            }, buttonParams())
-        } else {
-            body.addView(button("＋  SELECT AUDIO OR VIDEO", blue) { chooseFile() }, buttonParams())
-        }
+        body.addView(button("＋  SELECT AUDIO OR VIDEO", blue) { chooseFile() }, buttonParams())
         if (tool == "trim" || tool == "split" || tool == "ringtone") {
             section(body, if (tool == "ringtone") "RINGTONE LENGTH" else "TRIM RANGE")
             val times = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
@@ -481,18 +460,89 @@ class MainActivity : ComponentActivity() {
             body.addView(effects, matchWrap())
         }
         if (tool == "equalizer") {
-            section(body, "EQUALIZER PRESET")
+            section(body, "10-BAND GRAPHIC EQUALIZER")
+            body.addView(TextView(this).apply {
+                text = "Fine-tune ten frequency bands from deep bass to sparkling highs. Adjust each band from −12 dB to +12 dB."
+                textSize = 12f
+                setTextColor(Color.LTGRAY)
+                setPadding(0, 0, 0, dp(10))
+            }, matchWrap())
+            val frequencies = listOf("31 Hz", "62 Hz", "125 Hz", "250 Hz", "500 Hz", "1 kHz", "2 kHz", "4 kHz", "8 kHz", "16 kHz")
+            val eqBars = mutableListOf<SeekBar>()
+            val eqReadouts = mutableListOf<TextView>()
             val presets = Spinner(this).apply {
                 adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item,
-                    listOf("Balanced", "Bass Boost", "Treble Boost", "Vocal", "Soft"))
+                    listOf("Custom", "Flat", "Bass Boost", "Pop", "Rock", "Jazz", "Classical", "Vocal", "Treble Boost"))
                 onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
                     override fun onNothingSelected(parent: AdapterView<*>?) {}
                     override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
-                        equalizerPreset = listOf("Balanced", "Bass Boost", "Treble Boost", "Vocal", "Soft")[position]
+                        val preset = listOf("Custom", "Flat", "Bass Boost", "Pop", "Rock", "Jazz", "Classical", "Vocal", "Treble Boost")[position]
+                        equalizerPreset = preset
+                        val values = when (preset) {
+                            "Bass Boost" -> listOf(7, 6, 5, 3, 1, 0, 0, 0, 0, 0)
+                            "Pop" -> listOf(-1, 1, 4, 5, 2, -1, 1, 3, 4, 2)
+                            "Rock" -> listOf(5, 4, 2, -1, -2, 1, 4, 5, 5, 4)
+                            "Jazz" -> listOf(4, 3, 1, 2, -2, -2, 0, 2, 3, 4)
+                            "Classical" -> listOf(5, 4, 3, 2, -1, -1, 0, 2, 3, 4)
+                            "Vocal" -> listOf(-2, -1, 1, 3, 5, 5, 4, 2, 0, -1)
+                            "Treble Boost" -> listOf(0, 0, 0, 0, 0, 1, 3, 5, 7, 7)
+                            else -> List(10) { 0 }
+                        }
+                        equalizerGains.indices.forEach { i ->
+                            equalizerGains[i] = values[i]
+                            if (eqBars.size > i) eqBars[i].progress = values[i] + 12
+                            if (eqReadouts.size > i) eqReadouts[i].text = "${values[i]} dB"
+                        }
                     }
                 }
             }
+            body.addView(TextView(this).apply { text = "PRESET"; textSize = 11f; setTextColor(cyan) }, matchWrap())
             body.addView(presets, matchWrap())
+            frequencies.forEachIndexed { index, frequency ->
+                val band = LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    setPadding(0, dp(3), 0, dp(3))
+                }
+                band.addView(TextView(this).apply {
+                    text = frequency
+                    textSize = 12f
+                    setTextColor(Color.WHITE)
+                }, LinearLayout.LayoutParams(dp(54), -2))
+                val slider = SeekBar(this).apply {
+                    max = 24
+                    progress = 12
+                    progressTintList = android.content.res.ColorStateList.valueOf(cyan)
+                    thumbTintList = android.content.res.ColorStateList.valueOf(blue)
+                    setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                        override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                            equalizerGains[index] = progress - 12
+                            if (eqReadouts.size > index) eqReadouts[index].text = "${progress - 12} dB"
+                        }
+                        override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+                        override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+                    })
+                }
+                band.addView(slider, LinearLayout.LayoutParams(0, dp(42), 1f))
+                val readout = TextView(this).apply {
+                    text = "0 dB"
+                    textSize = 11f
+                    gravity = Gravity.END
+                    setTextColor(cyan)
+                }
+                band.addView(readout, LinearLayout.LayoutParams(dp(48), -2))
+                eqBars.add(slider)
+                eqReadouts.add(readout)
+                body.addView(band, matchWrap())
+            }
+            body.addView(button("RESET TO FLAT", panel2) {
+                equalizerGains.indices.forEach { i ->
+                    equalizerGains[i] = 0
+                    eqBars[i].progress = 12
+                    eqReadouts[i].text = "0 dB"
+                }
+                presets.setSelection(1)
+            }, buttonParams())
         }
         if (tool == "volume") {
             section(body, "VOLUME BOOST")
@@ -513,13 +563,9 @@ class MainActivity : ComponentActivity() {
                     "ringtone" -> "CREATE RINGTONE"
                     "voice" -> "APPLY VOICE EFFECT"
                     "equalizer" -> "APPLY EQUALIZER"
-                    "merge" -> "MERGE SELECTED AUDIO FILES"
                     else -> "CONVERT"
                 }, purple) {
-                if (tool == "merge") {
-                    if (selectedTrackUris.size < 2) toast("Select at least two audio files first.")
-                    else showSaveSettingsDialog()
-                } else showSaveSettingsDialog()
+                showSaveSettingsDialog()
             }, buttonParams())
         }
         body.addView(button("PLAY LAST SAVED FILE", panel2) { playLast() }, buttonParams())
@@ -615,29 +661,14 @@ class MainActivity : ComponentActivity() {
         val output = File(cacheDir, "export_${System.currentTimeMillis()}.$ext")
         pendingOutputName = fileName
         status.text = "Preparing your export…"
-        val trackInputs = mutableListOf<File>()
         Thread {
             try {
-                if (tool == "merge") {
-                    if (selectedTrackUris.size < 2) error("Select at least two tracks.")
-                    selectedTrackUris.forEachIndexed { index, trackUri ->
-                        val trackFile = File(cacheDir, "track_${System.currentTimeMillis()}_${index}.media")
-                        contentResolver.openInputStream(trackUri).use { stream ->
-                            requireNotNull(stream) { "Could not open one of the selected tracks." }
-                            FileOutputStream(trackFile).use { stream.copyTo(it) }
-                        }
-                        trackInputs.add(trackFile)
-                    }
-                } else {
-                    contentResolver.openInputStream(uri).use { stream ->
-                        requireNotNull(stream) { "Could not open selected file." }
-                        FileOutputStream(input).use { stream.copyTo(it) }
-                    }
+                contentResolver.openInputStream(uri).use { stream ->
+                    requireNotNull(stream) { "Could not open selected file." }
+                    FileOutputStream(input).use { stream.copyTo(it) }
                 }
                 val args = mutableListOf("-y")
-                if (tool == "merge") {
-                    trackInputs.forEach { args.addAll(listOf("-i", it.absolutePath)) }
-                } else if (tool == "trim" || tool == "split" || tool == "ringtone") {
+                if (tool == "trim" || tool == "split" || tool == "ringtone") {
                     val start = if (::startTime.isInitialized) startTime.text.toString().toDoubleOrNull() ?: 0.0 else 0.0
                     val end = if (::endTime.isInitialized) endTime.text.toString().toDoubleOrNull() else null
                     if (start < 0 || end == null || end <= start) {
@@ -647,7 +678,7 @@ class MainActivity : ComponentActivity() {
                     }
                     args.addAll(listOf("-ss", start.toString(), "-i", input.absolutePath, "-t", (end - start).toString()))
                 } else args.addAll(listOf("-i", input.absolutePath))
-                if (tool != "merge") args.addAll(listOf("-vn"))
+                args.addAll(listOf("-vn"))
                 when (ext) {
                     "mp3" -> args.addAll(listOf("-codec:a", "libmp3lame", "-b:a", kbps))
                     "wav" -> args.addAll(listOf("-codec:a", "pcm_s16le"))
@@ -666,21 +697,13 @@ class MainActivity : ComponentActivity() {
                     }
                 }
                 if (tool == "equalizer") {
-                    when (equalizerPreset) {
-                        "Bass Boost" -> filters.add("equalizer=f=100:width_type=o:width=2:g=8")
-                        "Treble Boost" -> filters.add("equalizer=f=6000:width_type=o:width=2:g=5")
-                        "Vocal" -> filters.add("equalizer=f=2500:width_type=o:width=1:g=4")
-                        "Soft" -> filters.add("lowpass=f=12000")
+                    val frequencies = listOf(31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000)
+                    frequencies.forEachIndexed { index, frequency ->
+                        val gain = equalizerGains[index]
+                        if (gain != 0) filters.add("equalizer=f=$frequency:width_type=o:width=1:g=$gain")
                     }
                 }
-                if (tool == "merge") {
-                    val normalizedInputs = trackInputs.indices.joinToString("") { index ->
-                        "[$index:a]aresample=44100,aformat=sample_fmts=fltp:channel_layouts=stereo,asetpts=PTS-STARTPTS[a$index];"
-                    }
-                    val inputLabels = trackInputs.indices.joinToString("") { "[a$it]" }
-                    val filter = normalizedInputs + inputLabels + "concat=n=${trackInputs.size}:v=0:a=1[outa]"
-                    args.addAll(listOf("-filter_complex", filter, "-map", "[outa]"))
-                } else if (filters.isNotEmpty()) args.addAll(listOf("-af", filters.joinToString(",")))
+                if (filters.isNotEmpty()) args.addAll(listOf("-af", filters.joinToString(",")))
                 args.add(output.absolutePath)
                 runOnUiThread { status.text = "Converting… please keep the app open." }
                 val session = FFmpegKit.execute(args.joinToString(" ") { quote(it) })
@@ -701,7 +724,6 @@ class MainActivity : ComponentActivity() {
                 runOnUiThread { status.text = "Error: ${e.message ?: "Could not read this file."}" }
             } finally {
                 input.delete()
-                trackInputs.forEach { it.delete() }
             }
         }.start()
     }
