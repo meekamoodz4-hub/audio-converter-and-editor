@@ -328,8 +328,7 @@ class MainActivity : ComponentActivity() {
         val first = listOf(
             Triple("✂", "Trim Audio", "trim"),
             Triple("◖))", "Volume Booster", "volume"),
-            Triple("⇄", "Merge Audio", "merge"),
-            Triple("♫", "Mix Audio", "mix")
+            Triple("⇄", "Audio Merger", "merge")
         )
         addTileGrid(body, first)
         section(body, "AUDIO PROCESSING")
@@ -340,15 +339,12 @@ class MainActivity : ComponentActivity() {
             Triple("Ⅱ", "Split Audio", "split")
         )
         addTileGrid(body, second)
-        section(body, "STUDIO EFFECTS")
+        section(body, "AUDIO EFFECTS")
         addTileGrid(body, listOf(
-            Triple("🎙", "Voice Changer", "voice"),
             Triple("♫", "Equalizer", "equalizer"),
-            Triple("☎", "Ringtone Maker", "ringtone"),
-            Triple("⇄", "Multi-track Mixer", "mix")
+            Triple("🎙", "Voice Changer", "voice"),
+            Triple("☎", "Ringtone Maker", "ringtone")
         ))
-        section(body, "MORE TOOLS")
-        addTileGrid(body, listOf(Triple("＋", "Audio Merger", "merge")))
         section(body, "YOUR FILES")
         body.addView(button("OUTPUTS  •  SAVED AUDIO", panel2) { showOutputs() }, buttonParams())
         body.addView(button("PRIVACY POLICY", panel2) {
@@ -427,8 +423,7 @@ class MainActivity : ComponentActivity() {
                 "trim", "split" -> "Choose the section of audio you want to keep."
                 "compress" -> "Create a smaller audio file with your chosen quality."
                 "volume" -> "Increase the audio volume before exporting."
-                "merge" -> "Choose an audio file to prepare for a merge workflow."
-                "mix" -> "Prepare a multi-track mix from your audio tracks."
+                "merge" -> "Join two or more audio files into one continuous audio track."
                 "voice" -> "Change the character of a voice with selectable audio effects."
                 "equalizer" -> "Shape the sound with a quick equalizer preset."
                 "ringtone" -> "Select a short section and export it as a ringtone."
@@ -446,8 +441,8 @@ class MainActivity : ComponentActivity() {
             background = rounded(panel, 14)
         }
         body.addView(fileLabel, matchWrap())
-        if (tool == "merge" || tool == "mix") {
-            body.addView(button("＋  SELECT MULTIPLE TRACKS", blue) {
+        if (tool == "merge") {
+            body.addView(button("＋  SELECT 2 OR MORE AUDIO FILES", blue) {
                 multiPicker.launch(arrayOf("audio/*"))
             }, buttonParams())
         } else {
@@ -518,12 +513,11 @@ class MainActivity : ComponentActivity() {
                     "ringtone" -> "CREATE RINGTONE"
                     "voice" -> "APPLY VOICE EFFECT"
                     "equalizer" -> "APPLY EQUALIZER"
-                    "merge" -> "SELECT TRACKS TO MERGE"
-                    "mix" -> "SELECT TRACKS TO MIX"
+                    "merge" -> "MERGE SELECTED AUDIO FILES"
                     else -> "CONVERT"
                 }, purple) {
-                if (tool == "merge" || tool == "mix") {
-                    if (selectedTrackUris.size < 2) toast("Select at least two audio tracks first.")
+                if (tool == "merge") {
+                    if (selectedTrackUris.size < 2) toast("Select at least two audio files first.")
                     else showSaveSettingsDialog()
                 } else showSaveSettingsDialog()
             }, buttonParams())
@@ -624,7 +618,7 @@ class MainActivity : ComponentActivity() {
         val trackInputs = mutableListOf<File>()
         Thread {
             try {
-                if (tool == "merge" || tool == "mix") {
+                if (tool == "merge") {
                     if (selectedTrackUris.size < 2) error("Select at least two tracks.")
                     selectedTrackUris.forEachIndexed { index, trackUri ->
                         val trackFile = File(cacheDir, "track_${System.currentTimeMillis()}_${index}.media")
@@ -641,7 +635,7 @@ class MainActivity : ComponentActivity() {
                     }
                 }
                 val args = mutableListOf("-y")
-                if (tool == "merge" || tool == "mix") {
+                if (tool == "merge") {
                     trackInputs.forEach { args.addAll(listOf("-i", it.absolutePath)) }
                 } else if (tool == "trim" || tool == "split" || tool == "ringtone") {
                     val start = if (::startTime.isInitialized) startTime.text.toString().toDoubleOrNull() ?: 0.0 else 0.0
@@ -652,8 +646,8 @@ class MainActivity : ComponentActivity() {
                         return@Thread
                     }
                     args.addAll(listOf("-ss", start.toString(), "-i", input.absolutePath, "-t", (end - start).toString()))
-                } else if (tool != "merge" && tool != "mix") args.addAll(listOf("-i", input.absolutePath))
-                if (tool != "merge" && tool != "mix") args.addAll(listOf("-vn"))
+                } else args.addAll(listOf("-i", input.absolutePath))
+                if (tool != "merge") args.addAll(listOf("-vn"))
                 when (ext) {
                     "mp3" -> args.addAll(listOf("-codec:a", "libmp3lame", "-b:a", kbps))
                     "wav" -> args.addAll(listOf("-codec:a", "pcm_s16le"))
@@ -679,10 +673,12 @@ class MainActivity : ComponentActivity() {
                         "Soft" -> filters.add("lowpass=f=12000")
                     }
                 }
-                if (tool == "merge" || tool == "mix") {
-                    val inputs = trackInputs.indices.joinToString("") { "[$it:a]" }
-                    val filter = if (tool == "merge") "${inputs}concat=n=${trackInputs.size}:v=0:a=1[outa]"
-                        else "${inputs}amix=inputs=${trackInputs.size}:duration=longest:dropout_transition=2[outa]"
+                if (tool == "merge") {
+                    val normalizedInputs = trackInputs.indices.joinToString("") { index ->
+                        "[$index:a]aresample=44100,aformat=sample_fmts=fltp:channel_layouts=stereo,asetpts=PTS-STARTPTS[a$index];"
+                    }
+                    val inputLabels = trackInputs.indices.joinToString("") { "[a$it]" }
+                    val filter = normalizedInputs + inputLabels + "concat=n=${trackInputs.size}:v=0:a=1[outa]"
                     args.addAll(listOf("-filter_complex", filter, "-map", "[outa]"))
                 } else if (filters.isNotEmpty()) args.addAll(listOf("-af", filters.joinToString(",")))
                 args.add(output.absolutePath)
