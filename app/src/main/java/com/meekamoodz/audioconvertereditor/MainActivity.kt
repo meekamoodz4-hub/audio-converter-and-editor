@@ -1,6 +1,8 @@
 package com.meekamoodz.audioconvertereditor
 
 import android.app.Activity
+import android.animation.ObjectAnimator
+import android.animation.ValueAnimator
 import android.app.AlertDialog
 import android.content.ContentValues
 import android.content.Intent
@@ -155,6 +157,7 @@ class MainActivity : ComponentActivity() {
     private var player: MediaPlayer? = null
     private var playerPrepared = false
     private var showingAppOpen = false
+    private var splashVisible = false
     private val handler = Handler(Looper.getMainLooper())
     private var updatingSeek = false
     private var lastDurationMs = 0
@@ -194,12 +197,91 @@ class MainActivity : ComponentActivity() {
         loadInterstitial()
         loadRewarded()
         loadAppOpen()
-        showHome()
+        showSplash()
     }
 
     override fun onStart() {
         super.onStart()
         showAppOpenIfReady()
+    }
+
+
+    private fun showSplash() {
+        splashVisible = true
+        val root = baseRoot()
+        root.gravity = Gravity.CENTER
+        val content = column().apply {
+            gravity = Gravity.CENTER
+            setPadding(dp(28), dp(24), dp(28), dp(24))
+        }
+        content.addView(TextView(this).apply {
+            text = "♫"
+            textSize = 76f
+            gravity = Gravity.CENTER
+            setTextColor(cyan)
+            setShadowLayer(dp(22).toFloat(), 0f, 0f, blue)
+        }, matchWrap())
+        content.addView(TextView(this).apply {
+            text = "AUDIO CONVERTER"
+            textSize = 25f
+            gravity = Gravity.CENTER
+            letterSpacing = 0.08f
+            setTextColor(Color.WHITE)
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            setPadding(0, dp(12), 0, dp(2))
+        }, matchWrap())
+        content.addView(TextView(this).apply {
+            text = "AND EDITOR"
+            textSize = 16f
+            gravity = Gravity.CENTER
+            letterSpacing = 0.22f
+            setTextColor(cyan)
+        }, matchWrap())
+        val bars = LinearLayout(this).apply {
+            gravity = Gravity.CENTER
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, dp(34), 0, dp(18))
+        }
+        val heights = listOf(18, 34, 52, 28, 44, 22, 48, 30, 18)
+        heights.forEachIndexed { index, height ->
+            val bar = View(this).apply {
+                background = rounded(if (index % 2 == 0) cyan else blue, 8)
+                pivotY = dp(height).toFloat() / 2f
+            }
+            bars.addView(bar, LinearLayout.LayoutParams(dp(5), dp(height)).apply {
+                marginStart = dp(4); marginEnd = dp(4)
+            })
+            ObjectAnimator.ofFloat(bar, "scaleY", 0.35f, 1.0f, 0.35f).apply {
+                duration = 520L + index * 65L
+                repeatCount = ValueAnimator.INFINITE
+                repeatMode = ValueAnimator.REVERSE
+                startDelay = index * 55L
+                start()
+            }
+        }
+        content.addView(bars, matchWrap())
+        content.addView(TextView(this).apply {
+            text = "GETTING YOUR STUDIO READY"
+            textSize = 10f
+            gravity = Gravity.CENTER
+            letterSpacing = 0.16f
+            setTextColor(Color.LTGRAY)
+        }, matchWrap())
+        val progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            isIndeterminate = true
+            progressTintList = android.content.res.ColorStateList.valueOf(cyan)
+            indeterminateTintList = android.content.res.ColorStateList.valueOf(cyan)
+        }
+        content.addView(progress, LinearLayout.LayoutParams(dp(170), dp(4)).apply { topMargin = dp(14) })
+        root.addView(content, LinearLayout.LayoutParams(-1, -2))
+        setContentView(root)
+        handler.postDelayed({
+            if (!isFinishing && splashVisible) {
+                splashVisible = false
+                showHome()
+                showAppOpenIfReady()
+            }
+        }, 1900L)
     }
 
     private fun showHome() {
@@ -793,7 +875,7 @@ class MainActivity : ComponentActivity() {
 
     private fun showAppOpenIfReady() {
         val ad = appOpen ?: return
-        if (isFinishing || showingAppOpen) return
+        if (isFinishing || showingAppOpen || splashVisible) return
         appOpen = null
         showingAppOpen = true
         ad.fullScreenContentCallback = object : FullScreenContentCallback() {
