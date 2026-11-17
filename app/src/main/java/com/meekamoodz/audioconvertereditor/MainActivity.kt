@@ -199,6 +199,7 @@ class MainActivity : ComponentActivity() {
     private val mixTracks = mutableListOf<MixTrack>()
     private var mixRows: LinearLayout? = null
     private var mixStatus: TextView? = null
+    private var videoPreview: VideoView? = null
 
     private var equalizerPreset = "Flat"
     private val equalizerGains = MutableList(10) { 0 }
@@ -211,7 +212,10 @@ class MainActivity : ComponentActivity() {
             if (::status.isInitialized) status.text = "Loading audio waveform…"
             try { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) {}
             if (::waveform.isInitialized) loadWaveform(uri)
-            preparePlayer(uri)
+            if (activeTool == "video") {
+                videoPreview?.setVideoURI(uri)
+                status.text = "Video loaded. Press play in the preview to watch it."
+            } else preparePlayer(uri)
         }
     }
 
@@ -358,64 +362,160 @@ class MainActivity : ComponentActivity() {
 
     private fun showHome() {
         activeTool = "home"
+        videoPreview = null
         val root = baseRoot()
-        val scroll = ScrollView(this)
-        val body = column().apply { setPadding(dp(18), dp(16), dp(18), dp(18)) }
-        body.addView(TextView(this).apply {
+        val scroll = ScrollView(this).apply { clipToPadding = false }
+        val body = column().apply { setPadding(dp(18), dp(12), dp(18), dp(22)) }
+
+        val top = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(8), 0, dp(16))
+        }
+        top.addView(TextView(this).apply {
             text = "♫"
-            textSize = 48f
-            gravity = Gravity.CENTER
-            setTextColor(blue)
-        }, matchWrap())
-        body.addView(TextView(this).apply {
-            text = "Audio Converter\nand Editor"
-            textSize = 29f
-            gravity = Gravity.CENTER
+            textSize = 34f
+            setTextColor(cyan)
+            setShadowLayer(dp(14).toFloat(), 0f, 0f, blue)
+            setPadding(0, 0, dp(10), 0)
+        }, LinearLayout.LayoutParams(dp(48), -2))
+        val brand = column()
+        brand.addView(TextView(this).apply {
+            text = "AUDIO EDITOR"
+            textSize = 19f
+            letterSpacing = 0.12f
             setTextColor(Color.WHITE)
             setTypeface(null, android.graphics.Typeface.BOLD)
         }, matchWrap())
-        body.addView(TextView(this).apply {
-            text = "CREATE • EDIT • CONVERT • LISTEN"
+        brand.addView(TextView(this).apply {
+            text = "Your all-in-one audio studio"
             textSize = 12f
-            gravity = Gravity.CENTER
-            setTextColor(Color.LTGRAY)
-            setPadding(0, dp(8), 0, dp(22))
+            setTextColor(Color.rgb(145, 184, 224))
         }, matchWrap())
+        top.addView(brand, LinearLayout.LayoutParams(0, -2, 1f))
+        top.addView(TextView(this).apply {
+            text = "PRO"
+            textSize = 10f
+            letterSpacing = 0.12f
+            gravity = Gravity.CENTER
+            setTextColor(Color.WHITE)
+            background = rounded(purple, 18)
+            setPadding(dp(12), dp(7), dp(12), dp(7))
+        }, matchWrap())
+        body.addView(top, matchWrap())
+
+        val hero = column().apply {
+            setPadding(dp(18), dp(18), dp(18), dp(18))
+            background = rounded(Color.rgb(16, 47, 104), 22)
+        }
+        hero.addView(TextView(this).apply {
+            text = "MAKE EVERY SOUND\nYOUR OWN"
+            textSize = 23f
+            letterSpacing = 0.04f
+            setTextColor(Color.WHITE)
+            setTypeface(null, android.graphics.Typeface.BOLD)
+        }, matchWrap())
+        hero.addView(TextView(this).apply {
+            text = "Trim, mix, enhance and convert your favourite audio."
+            textSize = 13f
+            setTextColor(Color.rgb(190, 214, 245))
+            setPadding(0, dp(7), 0, dp(14))
+        }, matchWrap())
+        hero.addView(button("OPEN AUDIO STUDIO  →", purple) { openTool("convert", "Format Converter") }, buttonParams())
+        body.addView(hero, matchWrap())
+
         section(body, "AUDIO EDITOR")
-        val first = listOf(
+        addTileGrid(body, listOf(
             Triple("✂", "Trim Audio", "trim"),
             Triple("▥", "Multi-Track Studio", "multitrack"),
             Triple("◖))", "Volume Booster", "volume")
-        )
-        addTileGrid(body, first)
+        ))
         section(body, "AUDIO PROCESSING")
-        val second = listOf(
+        addTileGrid(body, listOf(
             Triple("▶♫", "Video to MP3", "video"),
             Triple("⇄", "Format Converter", "convert"),
             Triple("▤", "Compressor", "compress"),
             Triple("Ⅱ", "Split Audio", "split")
-        )
-        addTileGrid(body, second)
+        ))
         section(body, "AUDIO EFFECTS")
         addTileGrid(body, listOf(
-            Triple("♫", "Equalizer", "equalizer"),
+            Triple("♫", "10-Band Equalizer", "equalizer"),
             Triple("🎙", "Voice Changer", "voice"),
             Triple("☎", "Ringtone Maker", "ringtone")
         ))
-        section(body, "YOUR FILES")
-        body.addView(button("OUTPUTS  •  SAVED AUDIO", panel2) { showOutputs() }, buttonParams())
+        section(body, "YOUR STUDIO")
+        body.addView(button("▣   MY SAVED AUDIO & OUTPUTS", panel2) { showOutputs() }, buttonParams())
         body.addView(button("PRIVACY POLICY", panel2) {
             startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://sites.google.com/view/droptechdevelopers/audio-converter-and-editor-button?authuser=1")))
         }, buttonParams())
         body.addView(TextView(this).apply {
-            text = "Every exported file must be saved through the rewarded-ad step."
-            textSize = 12f
+            text = "Create • Edit • Convert • Listen"
+            textSize = 11f
             gravity = Gravity.CENTER
-            setTextColor(Color.LTGRAY)
-            setPadding(0, dp(18), 0, dp(4))
+            letterSpacing = 0.12f
+            setTextColor(Color.rgb(133, 160, 205))
+            setPadding(0, dp(18), 0, dp(6))
         }, matchWrap())
+
         scroll.addView(body)
         root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
+        val nav = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            setPadding(dp(8), dp(7), dp(8), dp(7))
+            background = rounded(Color.rgb(12, 22, 70), 16)
+        }
+        fun navItem(icon: String, label: String, selected: Boolean, action: () -> Unit) {
+            val item = column().apply {
+                gravity = Gravity.CENTER
+                setPadding(0, dp(5), 0, dp(5))
+                isClickable = true
+                isFocusable = true
+                setOnClickListener { action() }
+            }
+            item.addView(TextView(this).apply {
+                text = icon; textSize = 20f; gravity = Gravity.CENTER
+                setTextColor(if (selected) cyan else Color.LTGRAY)
+            }, matchWrap())
+            item.addView(TextView(this).apply {
+                text = label; textSize = 10f; gravity = Gravity.CENTER
+                setTextColor(if (selected) cyan else Color.LTGRAY)
+            }, matchWrap())
+            nav.addView(item, LinearLayout.LayoutParams(0, -2, 1f))
+        }
+        navItem("⌂", "Home", true) { showHome() }
+        navItem("▣", "Files", false) { showOutputs() }
+        navItem("⚙", "Settings", false) { showSettings() }
+        root.addView(nav, LinearLayout.LayoutParams(-1, -2).apply {
+            setMargins(dp(12), dp(4), dp(12), dp(6))
+        })
+        attachBanner(root)
+        setContentView(root)
+    }
+
+    private fun showSettings() {
+        activeTool = "settings"
+        val root = baseRoot()
+        val body = column().apply { setPadding(dp(18), dp(16), dp(18), dp(18)) }
+        val header = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        header.addView(button("‹", panel2) { showHome() }, LinearLayout.LayoutParams(dp(54), dp(48)))
+        header.addView(TextView(this).apply {
+            text = "Settings"; textSize = 24f; setTextColor(Color.WHITE); setPadding(dp(12), 0, 0, 0)
+        }, matchWrap())
+        body.addView(header, matchWrap())
+        body.addView(TextView(this).apply {
+            text = "AUDIO CONVERTER AND EDITOR"
+            textSize = 17f; setTextColor(cyan); setPadding(0, dp(26), 0, dp(8))
+        }, matchWrap())
+        body.addView(TextView(this).apply {
+            text = "Version 1.1\nCreate and edit audio on your device."
+            textSize = 13f; setTextColor(Color.LTGRAY)
+        }, matchWrap())
+        body.addView(button("PRIVACY POLICY", panel2) {
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://sites.google.com/view/droptechdevelopers/audio-converter-and-editor-button?authuser=1")))
+        }, buttonParams())
+        body.addView(button("BACK TO HOME", purple) { showHome() }, buttonParams())
+        root.addView(body, LinearLayout.LayoutParams(-1, 0, 1f))
         attachBanner(root)
         setContentView(root)
     }
@@ -498,7 +598,21 @@ class MainActivity : ComponentActivity() {
             background = rounded(panel, 14)
         }
         body.addView(fileLabel, matchWrap())
-        body.addView(button("＋  SELECT AUDIO OR VIDEO", blue) { chooseFile() }, buttonParams())
+        body.addView(button(if (tool == "video") "＋  SELECT VIDEO" else "＋  SELECT AUDIO", blue) { chooseFile() }, buttonParams())
+        if (tool == "video") {
+            section(body, "VIDEO PREVIEW")
+            videoPreview = VideoView(this).apply {
+                setBackgroundColor(Color.BLACK)
+                setMediaController(MediaController(this@MainActivity).apply { setAnchorView(this@apply) })
+            }
+            body.addView(videoPreview, LinearLayout.LayoutParams(-1, dp(220)).apply { topMargin = dp(4); bottomMargin = dp(10) })
+            selectedUri?.let { videoPreview?.setVideoURI(it) }
+            section(body, "OUTPUT SETTINGS")
+            body.addView(TextView(this).apply {
+                text = "Extract the soundtrack and export it as MP3, WAV, M4A or FLAC. Choose quality and file name when you convert."
+                textSize = 12f; setTextColor(Color.LTGRAY); setPadding(0, 0, 0, dp(8))
+            }, matchWrap())
+        }
         if (tool == "trim" || tool == "split" || tool == "ringtone") {
             section(body, if (tool == "ringtone") "RINGTONE LENGTH" else "TRIM RANGE")
             val times = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
@@ -520,8 +634,10 @@ class MainActivity : ComponentActivity() {
             body.addView(waveform, LinearLayout.LayoutParams(-1, dp(190)).apply { topMargin = dp(12); bottomMargin = dp(8) })
             selectedUri?.let { loadWaveform(it) }
         }
-        section(body, "PLAYER")
-        addPlayer(body)
+        if (tool != "video") {
+            section(body, "AUDIO PLAYER")
+            addPlayer(body)
+        }
         if (tool == "voice") {
             section(body, "VOICE EFFECT")
             val effects = Spinner(this).apply {
@@ -573,13 +689,20 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             }
-            body.addView(TextView(this).apply { text = "PRESET"; textSize = 11f; setTextColor(cyan) }, matchWrap())
-            body.addView(presets, matchWrap())
+            val presetCard = column().apply { setPadding(dp(14), dp(12), dp(14), dp(12)); background = rounded(panel, 16) }
+            presetCard.addView(TextView(this).apply { text = "SOUND PROFILE"; textSize = 11f; letterSpacing = 0.1f; setTextColor(cyan) }, matchWrap())
+            presetCard.addView(presets, matchWrap())
+            body.addView(presetCard, matchWrap())
+            body.addView(TextView(this).apply {
+                text = "FREQUENCY MIXER     −12 dB  to  +12 dB"
+                textSize = 10f; letterSpacing = 0.06f; setTextColor(Color.LTGRAY); setPadding(0, dp(14), 0, dp(6))
+            }, matchWrap())
             frequencies.forEachIndexed { index, frequency ->
                 val band = LinearLayout(this).apply {
                     orientation = LinearLayout.HORIZONTAL
                     gravity = Gravity.CENTER_VERTICAL
-                    setPadding(0, dp(3), 0, dp(3))
+                    setPadding(dp(10), dp(4), dp(10), dp(4))
+                    background = rounded(if (index % 2 == 0) Color.rgb(16, 42, 91) else Color.rgb(37, 29, 91), 12)
                 }
                 band.addView(TextView(this).apply {
                     text = frequency
@@ -610,9 +733,9 @@ class MainActivity : ComponentActivity() {
                 band.addView(readout, LinearLayout.LayoutParams(dp(48), -2))
                 eqBars.add(slider)
                 eqReadouts.add(readout)
-                body.addView(band, matchWrap())
+                body.addView(band, LinearLayout.LayoutParams(-1, dp(54)).apply { bottomMargin = dp(5) })
             }
-            body.addView(button("RESET TO FLAT", panel2) {
+            body.addView(button("RESET ALL BANDS TO FLAT", panel2) {
                 equalizerGains.indices.forEach { i ->
                     equalizerGains[i] = 0
                     eqBars[i].progress = 12
@@ -1147,7 +1270,7 @@ class MainActivity : ComponentActivity() {
         val openPicker = {
             val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
                 addCategory(Intent.CATEGORY_OPENABLE)
-                type = "*/*"
+                type = if (activeTool == "video") "video/*" else "audio/*"
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
             }
             picker.launch(intent)
