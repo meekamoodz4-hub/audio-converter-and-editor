@@ -395,26 +395,6 @@ class MainActivity : ComponentActivity() {
         top.addView(brand, LinearLayout.LayoutParams(0, -2, 1f))
         body.addView(top, matchWrap())
 
-        val hero = column().apply {
-            setPadding(dp(18), dp(18), dp(18), dp(18))
-            background = rounded(Color.rgb(16, 47, 104), 22)
-        }
-        hero.addView(TextView(this).apply {
-            text = "MAKE EVERY SOUND\nYOUR OWN"
-            textSize = 23f
-            letterSpacing = 0.04f
-            setTextColor(Color.WHITE)
-            setTypeface(null, android.graphics.Typeface.BOLD)
-        }, matchWrap())
-        hero.addView(TextView(this).apply {
-            text = "Trim, mix, enhance and convert your favourite audio."
-            textSize = 13f
-            setTextColor(Color.rgb(190, 214, 245))
-            setPadding(0, dp(7), 0, dp(14))
-        }, matchWrap())
-        hero.addView(button("OPEN AUDIO STUDIO  →", purple) { openTool("convert", "Format Converter") }, buttonParams())
-        body.addView(hero, matchWrap())
-
         section(body, "AUDIO EDITOR")
         addTileGrid(body, listOf(
             Triple("✂", "Trim Audio", "trim"),
