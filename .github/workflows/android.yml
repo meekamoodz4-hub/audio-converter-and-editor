@@ -2,6 +2,8 @@ name: Build Audio Converter and Editor APK
 
 on:
   push:
+    branches: [ "main", "upgrade/**" ]
+  pull_request:
     branches: [ "main" ]
   workflow_dispatch:
 

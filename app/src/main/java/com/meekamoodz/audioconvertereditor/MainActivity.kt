@@ -1,6 +1,8 @@
 package com.meekamoodz.audioconvertereditor
 
 import android.app.Activity
+import android.animation.ObjectAnimator
+import android.animation.ValueAnimator
 import android.app.AlertDialog
 import android.content.ContentValues
 import android.content.Intent
@@ -20,6 +22,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.widget.*
 import androidx.activity.ComponentActivity
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import com.arthenica.ffmpegkit.FFmpegKit
 import com.arthenica.ffmpegkit.ReturnCode
@@ -43,8 +46,11 @@ private class AudioWaveformView(context: android.content.Context) : View(context
     private var durationSeconds = 0.0
     private var startSeconds = 0.0
     private var endSeconds = 0.0
-    private var dragStart = false
+    private var playheadSeconds = 0.0
+    private var dragMode = DragMode.PLAYHEAD
+    private enum class DragMode { START, END, PLAYHEAD }
     var onSelectionChanged: ((Double, Double) -> Unit)? = null
+    var onPlayheadChanged: ((Double) -> Unit)? = null
 
     init {
         barPaint.color = Color.rgb(40, 165, 250)
@@ -58,8 +64,14 @@ private class AudioWaveformView(context: android.content.Context) : View(context
         durationSeconds = duration.coerceAtLeast(0.01)
         startSeconds = 0.0
         endSeconds = durationSeconds
+        playheadSeconds = 0.0
         invalidate()
         onSelectionChanged?.invoke(startSeconds, endSeconds)
+    }
+
+    fun setPlayhead(seconds: Double) {
+        playheadSeconds = seconds.coerceIn(0.0, durationSeconds.coerceAtLeast(0.0))
+        invalidate()
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -75,21 +87,30 @@ private class AudioWaveformView(context: android.content.Context) : View(context
         }
         val sx = (startSeconds / durationSeconds).toFloat().coerceIn(0f, 1f) * w
         val ex = (endSeconds / durationSeconds).toFloat().coerceIn(0f, 1f) * w
+        val px = (playheadSeconds / durationSeconds).toFloat().coerceIn(0f, 1f) * w
         canvas.drawRect(sx, 0f, ex, h, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(36, 40, 165, 250) })
         val step = w / levels.size.coerceAtLeast(1)
         val bw = (step * 0.48f).coerceAtLeast(1f)
         levels.forEachIndexed { index, level ->
             val x = index * step + (step - bw) / 2f
-            val bh = (level.coerceIn(0.025f, 1f) * h * 0.82f).coerceAtLeast(3f)
-            barPaint.color = if (x >= sx && x <= ex) Color.rgb(40, 165, 250) else Color.rgb(76, 91, 148)
+            val bh = (level.coerceIn(0.025f, 1f) * h * 0.72f).coerceAtLeast(3f)
+            barPaint.color = if (x >= sx && x <= ex) Color.rgb(40, 190, 235) else Color.rgb(76, 91, 148)
             canvas.drawRoundRect(x, (h - bh) / 2f, x + bw, (h + bh) / 2f, bw / 2f, bw / 2f, barPaint)
         }
-        handlePaint.color = Color.rgb(40, 165, 250)
-        canvas.drawRoundRect(sx - 3f, 0f, sx + 3f, h, 3f, 3f, handlePaint)
-        handlePaint.color = Color.rgb(249, 115, 22)
-        canvas.drawRoundRect(ex - 3f, 0f, ex + 3f, h, 3f, 3f, handlePaint)
-        canvas.drawCircle(sx, h * 0.12f, 9f, handlePaint)
-        canvas.drawCircle(ex, h * 0.12f, 9f, handlePaint)
+        handlePaint.color = Color.rgb(40, 220, 160)
+        canvas.drawRoundRect(sx - 4f, 0f, sx + 4f, h, 4f, 4f, handlePaint)
+        canvas.drawRoundRect(ex - 4f, 0f, ex + 4f, h, 4f, 4f, handlePaint)
+        canvas.drawCircle(sx, h * 0.12f, 10f, handlePaint)
+        canvas.drawCircle(ex, h * 0.12f, 10f, handlePaint)
+        handlePaint.color = Color.rgb(255, 190, 70)
+        canvas.drawLine(px, 0f, px, h, handlePaint.apply { strokeWidth = 3.5f })
+        canvas.drawCircle(px, h * 0.5f, 8f, handlePaint)
+        textPaint.textAlign = Paint.Align.CENTER
+        textPaint.textSize = 10f * resources.displayMetrics.density
+        textPaint.color = Color.rgb(255, 210, 120)
+        canvas.drawText("PLAYHEAD", px.coerceIn(38f, w - 38f), h - 7f, textPaint)
+        textPaint.color = Color.WHITE
+        textPaint.textSize = 26f
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
@@ -99,7 +120,14 @@ private class AudioWaveformView(context: android.content.Context) : View(context
             MotionEvent.ACTION_DOWN -> {
                 val sx = (startSeconds / durationSeconds).toFloat() * width
                 val ex = (endSeconds / durationSeconds).toFloat() * width
-                dragStart = abs(x - sx) <= abs(x - ex)
+                val px = (playheadSeconds / durationSeconds).toFloat() * width
+                dragMode = if (event.y < height * 0.32f) {
+                    if (abs(x - sx) <= abs(x - ex)) DragMode.START else DragMode.END
+                } else {
+                    if (abs(x - sx) < dp(18f) && abs(x - sx) <= abs(x - px)) DragMode.START
+                    else if (abs(x - ex) < dp(18f) && abs(x - ex) < abs(x - px)) DragMode.END
+                    else DragMode.PLAYHEAD
+                }
                 parent?.requestDisallowInterceptTouchEvent(true)
                 updateFromX(x)
                 return true
@@ -117,12 +145,19 @@ private class AudioWaveformView(context: android.content.Context) : View(context
 
     private fun updateFromX(x: Float) {
         val t = (x / width.toFloat()).coerceIn(0f, 1f) * durationSeconds
-        if (dragStart) startSeconds = t.coerceAtMost(endSeconds - 0.05).coerceAtLeast(0.0)
-        else endSeconds = t.coerceAtLeast(startSeconds + 0.05).coerceAtMost(durationSeconds)
+        when (dragMode) {
+            DragMode.START -> startSeconds = t.coerceAtMost(endSeconds - 0.05).coerceAtLeast(0.0)
+            DragMode.END -> endSeconds = t.coerceAtLeast(startSeconds + 0.05).coerceAtMost(durationSeconds)
+            DragMode.PLAYHEAD -> {
+                playheadSeconds = t
+                onPlayheadChanged?.invoke(playheadSeconds)
+            }
+        }
         invalidate()
         onSelectionChanged?.invoke(startSeconds, endSeconds)
     }
 
+    private fun dp(value: Float) = value * resources.displayMetrics.density
     override fun performClick(): Boolean { super.performClick(); return true }
 }
 
@@ -155,9 +190,18 @@ class MainActivity : ComponentActivity() {
     private var player: MediaPlayer? = null
     private var playerPrepared = false
     private var showingAppOpen = false
+    private var splashVisible = false
     private val handler = Handler(Looper.getMainLooper())
     private var updatingSeek = false
     private var lastDurationMs = 0
+    private var selectedVoiceEffect = "Normal"
+    private data class MixTrack(val uri: Uri, val name: String, var offsetMs: Int = 0, var gain: Int = 100)
+    private val mixTracks = mutableListOf<MixTrack>()
+    private var mixRows: LinearLayout? = null
+    private var mixStatus: TextView? = null
+
+    private var equalizerPreset = "Flat"
+    private val equalizerGains = MutableList(10) { 0 }
 
     private val picker = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == Activity.RESULT_OK) result.data?.data?.let { uri ->
@@ -171,6 +215,21 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+
+    private val mixPicker = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val data = result.data
+            val uris = mutableListOf<Uri>()
+            data?.clipData?.let { clip -> for (i in 0 until clip.itemCount) uris.add(clip.getItemAt(i).uri) }
+            if (uris.isEmpty()) data?.data?.let { uris.add(it) }
+            uris.forEach { uri ->
+                try { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) {}
+                mixTracks.add(MixTrack(uri, queryName(uri) ?: "Audio ${mixTracks.size + 1}"))
+            }
+            renderMixRows()
+        }
+    }
+
     private val tick = object : Runnable {
         override fun run() {
             val p = player
@@ -181,7 +240,8 @@ class MainActivity : ComponentActivity() {
                 playerSeek.progress = pos
                 updatingSeek = false
                 playerTime.text = "${timeText(pos)} / ${timeText(p.duration)}"
-                handler.postDelayed(this, 350)
+                if (::waveform.isInitialized) waveform.setPlayhead(pos / 1000.0)
+                handler.postDelayed(this, 120)
             }
         }
     }
@@ -190,17 +250,111 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         window.statusBarColor = bg
         window.navigationBarColor = bg
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                if (splashVisible) return
+                if (activeTool != "home") {
+                    stopPlayer()
+                    showHome()
+                    return
+                }
+                AlertDialog.Builder(this@MainActivity)
+                    .setTitle("Exit Audio Converter and Editor?")
+                    .setMessage("Do you want to close the app?")
+                    .setNegativeButton("STAY", null)
+                    .setPositiveButton("EXIT") { _, _ -> finish() }
+                    .show()
+            }
+        })
         MobileAds.initialize(this) {}
         loadInterstitial()
         loadRewarded()
         loadAppOpen()
-        showHome()
+        showSplash()
     }
 
     override fun onStart() {
         super.onStart()
         showAppOpenIfReady()
     }
+
+
+    private fun showSplash() {
+        splashVisible = true
+        val root = baseRoot()
+        root.gravity = Gravity.CENTER
+        val content = column().apply {
+            gravity = Gravity.CENTER
+            setPadding(dp(28), dp(24), dp(28), dp(24))
+        }
+        content.addView(TextView(this).apply {
+            text = "♫"
+            textSize = 76f
+            gravity = Gravity.CENTER
+            setTextColor(cyan)
+            setShadowLayer(dp(22).toFloat(), 0f, 0f, blue)
+        }, matchWrap())
+        content.addView(TextView(this).apply {
+            text = "AUDIO CONVERTER"
+            textSize = 25f
+            gravity = Gravity.CENTER
+            letterSpacing = 0.08f
+            setTextColor(Color.WHITE)
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            setPadding(0, dp(12), 0, dp(2))
+        }, matchWrap())
+        content.addView(TextView(this).apply {
+            text = "AND EDITOR"
+            textSize = 16f
+            gravity = Gravity.CENTER
+            letterSpacing = 0.22f
+            setTextColor(cyan)
+        }, matchWrap())
+        val bars = LinearLayout(this).apply {
+            gravity = Gravity.CENTER
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, dp(34), 0, dp(18))
+        }
+        val heights = listOf(18, 34, 52, 28, 44, 22, 48, 30, 18)
+        heights.forEachIndexed { index, height ->
+            val bar = View(this).apply {
+                background = rounded(if (index % 2 == 0) cyan else blue, 8)
+                pivotY = dp(height).toFloat() / 2f
+            }
+            bars.addView(bar, LinearLayout.LayoutParams(dp(5), dp(height)).apply {
+                marginStart = dp(4); marginEnd = dp(4)
+            })
+            ObjectAnimator.ofFloat(bar, "scaleY", 0.35f, 1.0f, 0.35f).apply {
+                duration = 520L + index * 65L
+                repeatCount = ValueAnimator.INFINITE
+                repeatMode = ValueAnimator.REVERSE
+                startDelay = index * 55L
+                start()
+            }
+        }
+        content.addView(bars, matchWrap())
+        content.addView(TextView(this).apply {
+            text = "GETTING YOUR STUDIO READY"
+            textSize = 10f
+            gravity = Gravity.CENTER
+            letterSpacing = 0.16f
+            setTextColor(Color.LTGRAY)
+        }, matchWrap())
+        val progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            isIndeterminate = true
+            progressTintList = android.content.res.ColorStateList.valueOf(cyan)
+            indeterminateTintList = android.content.res.ColorStateList.valueOf(cyan)
+        }
+        content.addView(progress, LinearLayout.LayoutParams(dp(170), dp(4)).apply { topMargin = dp(14) })
+        root.addView(content, LinearLayout.LayoutParams(-1, -2))
+        setContentView(root)
+        handler.postDelayed({
+            if (!isFinishing && splashVisible) {
+                splashVisible = false
+                showHome()
+                showAppOpenIfReady()
+            }
+        }, 1900L)    }
 
     private fun showHome() {
         activeTool = "home"
@@ -230,9 +384,8 @@ class MainActivity : ComponentActivity() {
         section(body, "AUDIO EDITOR")
         val first = listOf(
             Triple("✂", "Trim Audio", "trim"),
-            Triple("◖))", "Volume Booster", "volume"),
-            Triple("⇄", "Merge Audio", "merge"),
-            Triple("♫", "Mix Audio", "mix")
+            Triple("▥", "Multi-Track Studio", "multitrack"),
+            Triple("◖))", "Volume Booster", "volume")
         )
         addTileGrid(body, first)
         section(body, "AUDIO PROCESSING")
@@ -243,6 +396,12 @@ class MainActivity : ComponentActivity() {
             Triple("Ⅱ", "Split Audio", "split")
         )
         addTileGrid(body, second)
+        section(body, "AUDIO EFFECTS")
+        addTileGrid(body, listOf(
+            Triple("♫", "Equalizer", "equalizer"),
+            Triple("🎙", "Voice Changer", "voice"),
+            Triple("☎", "Ringtone Maker", "ringtone")
+        ))
         section(body, "YOUR FILES")
         body.addView(button("OUTPUTS  •  SAVED AUDIO", panel2) { showOutputs() }, buttonParams())
         body.addView(button("PRIVACY POLICY", panel2) {
@@ -300,6 +459,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun openTool(tool: String, title: String) {
+        if (tool == "multitrack") { showMultiTrackStudio(); return }
         activeTool = tool
         val root = baseRoot()
         val scroll = ScrollView(this)
@@ -321,8 +481,9 @@ class MainActivity : ComponentActivity() {
                 "trim", "split" -> "Choose the section of audio you want to keep."
                 "compress" -> "Create a smaller audio file with your chosen quality."
                 "volume" -> "Increase the audio volume before exporting."
-                "merge" -> "Choose an audio file to prepare for a merge workflow."
-                "mix" -> "Choose an audio file to prepare for a mix workflow."
+                "voice" -> "Change the character of a voice with selectable audio effects."
+                "equalizer" -> "Shape the sound with a quick equalizer preset."
+                "ringtone" -> "Select a short section and export it as a ringtone."
                 else -> "Edit your audio."
             }
             textSize = 14f
@@ -338,8 +499,8 @@ class MainActivity : ComponentActivity() {
         }
         body.addView(fileLabel, matchWrap())
         body.addView(button("＋  SELECT AUDIO OR VIDEO", blue) { chooseFile() }, buttonParams())
-        if (tool == "trim" || tool == "split") {
-            section(body, "TRIM RANGE")
+        if (tool == "trim" || tool == "split" || tool == "ringtone") {
+            section(body, if (tool == "ringtone") "RINGTONE LENGTH" else "TRIM RANGE")
             val times = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
             startTime = edit("Start (seconds)")
             endTime = edit("End (seconds)")
@@ -351,11 +512,115 @@ class MainActivity : ComponentActivity() {
                 startTime.setText(String.format(Locale.US, "%.2f", start))
                 endTime.setText(String.format(Locale.US, "%.2f", end))
             }
+            waveform.onPlayheadChanged = { seconds ->
+                if (playerPrepared) {
+                    try { player?.seekTo((seconds * 1000.0).toInt()) } catch (_: Exception) {}
+                }
+            }
             body.addView(waveform, LinearLayout.LayoutParams(-1, dp(190)).apply { topMargin = dp(12); bottomMargin = dp(8) })
             selectedUri?.let { loadWaveform(it) }
         }
         section(body, "PLAYER")
         addPlayer(body)
+        if (tool == "voice") {
+            section(body, "VOICE EFFECT")
+            val effects = Spinner(this).apply {
+                adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item,
+                    listOf("Normal", "Deep Voice", "High Pitch", "Robot", "Echo"))
+                onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+                    override fun onNothingSelected(parent: AdapterView<*>?) {}
+                    override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                        selectedVoiceEffect = listOf("Normal", "Deep Voice", "High Pitch", "Robot", "Echo")[position]
+                    }
+                }
+            }
+            body.addView(effects, matchWrap())
+        }
+        if (tool == "equalizer") {
+            section(body, "10-BAND GRAPHIC EQUALIZER")
+            body.addView(TextView(this).apply {
+                text = "Fine-tune ten frequency bands from deep bass to sparkling highs. Adjust each band from −12 dB to +12 dB."
+                textSize = 12f
+                setTextColor(Color.LTGRAY)
+                setPadding(0, 0, 0, dp(10))
+            }, matchWrap())
+            val frequencies = listOf("31 Hz", "62 Hz", "125 Hz", "250 Hz", "500 Hz", "1 kHz", "2 kHz", "4 kHz", "8 kHz", "16 kHz")
+            val eqBars = mutableListOf<SeekBar>()
+            val eqReadouts = mutableListOf<TextView>()
+            val presets = Spinner(this).apply {
+                adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item,
+                    listOf("Custom", "Flat", "Bass Boost", "Pop", "Rock", "Jazz", "Classical", "Vocal", "Treble Boost"))
+                onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+                    override fun onNothingSelected(parent: AdapterView<*>?) {}
+                    override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                        val preset = listOf("Custom", "Flat", "Bass Boost", "Pop", "Rock", "Jazz", "Classical", "Vocal", "Treble Boost")[position]
+                        equalizerPreset = preset
+                        val values = when (preset) {
+                            "Bass Boost" -> listOf(7, 6, 5, 3, 1, 0, 0, 0, 0, 0)
+                            "Pop" -> listOf(-1, 1, 4, 5, 2, -1, 1, 3, 4, 2)
+                            "Rock" -> listOf(5, 4, 2, -1, -2, 1, 4, 5, 5, 4)
+                            "Jazz" -> listOf(4, 3, 1, 2, -2, -2, 0, 2, 3, 4)
+                            "Classical" -> listOf(5, 4, 3, 2, -1, -1, 0, 2, 3, 4)
+                            "Vocal" -> listOf(-2, -1, 1, 3, 5, 5, 4, 2, 0, -1)
+                            "Treble Boost" -> listOf(0, 0, 0, 0, 0, 1, 3, 5, 7, 7)
+                            else -> List(10) { 0 }
+                        }
+                        equalizerGains.indices.forEach { i ->
+                            equalizerGains[i] = values[i]
+                            if (eqBars.size > i) eqBars[i].progress = values[i] + 12
+                            if (eqReadouts.size > i) eqReadouts[i].text = "${values[i]} dB"
+                        }
+                    }
+                }
+            }
+            body.addView(TextView(this).apply { text = "PRESET"; textSize = 11f; setTextColor(cyan) }, matchWrap())
+            body.addView(presets, matchWrap())
+            frequencies.forEachIndexed { index, frequency ->
+                val band = LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    setPadding(0, dp(3), 0, dp(3))
+                }
+                band.addView(TextView(this).apply {
+                    text = frequency
+                    textSize = 12f
+                    setTextColor(Color.WHITE)
+                }, LinearLayout.LayoutParams(dp(54), -2))
+                val slider = SeekBar(this).apply {
+                    max = 24
+                    progress = 12
+                    progressTintList = android.content.res.ColorStateList.valueOf(cyan)
+                    thumbTintList = android.content.res.ColorStateList.valueOf(blue)
+                    setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                        override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                            equalizerGains[index] = progress - 12
+                            if (eqReadouts.size > index) eqReadouts[index].text = "${progress - 12} dB"
+                        }
+                        override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+                        override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+                    })
+                }
+                band.addView(slider, LinearLayout.LayoutParams(0, dp(42), 1f))
+                val readout = TextView(this).apply {
+                    text = "0 dB"
+                    textSize = 11f
+                    gravity = Gravity.END
+                    setTextColor(cyan)
+                }
+                band.addView(readout, LinearLayout.LayoutParams(dp(48), -2))
+                eqBars.add(slider)
+                eqReadouts.add(readout)
+                body.addView(band, matchWrap())
+            }
+            body.addView(button("RESET TO FLAT", panel2) {
+                equalizerGains.indices.forEach { i ->
+                    equalizerGains[i] = 0
+                    eqBars[i].progress = 12
+                    eqReadouts[i].text = "0 dB"
+                }
+                presets.setSelection(1)
+            }, buttonParams())
+        }
         if (tool == "volume") {
             section(body, "VOLUME BOOST")
             val volume = SeekBar(this).apply { max = 300; progress = 150 }
@@ -369,10 +634,15 @@ class MainActivity : ComponentActivity() {
             body.addView(volume, matchWrap())
             body.addView(button("CONVERT", purple) { showSaveSettingsDialog(volume.progress) }, buttonParams())
         } else {
-            body.addView(button(if (tool == "trim" || tool == "split") "CONVERT SELECTED SECTION" else "CONVERT", purple) {
-                if (tool == "merge" || tool == "mix") {
-                    toast("This tool needs a second audio file. Choose another tool for now.")
-                } else showSaveSettingsDialog()
+            body.addView(button(
+                when (tool) {
+                    "trim", "split" -> "EXPORT SELECTED SECTION"
+                    "ringtone" -> "CREATE RINGTONE"
+                    "voice" -> "APPLY VOICE EFFECT"
+                    "equalizer" -> "APPLY EQUALIZER"
+                    else -> "CONVERT"
+                }, purple) {
+                showSaveSettingsDialog()
             }, buttonParams())
         }
         body.addView(button("PLAY LAST SAVED FILE", panel2) { playLast() }, buttonParams())
@@ -390,6 +660,189 @@ class MainActivity : ComponentActivity() {
         setContentView(root)
     }
 
+
+    private fun showMultiTrackStudio() {
+        activeTool = "multitrack"
+        stopPlayer()
+        val root = baseRoot()
+        val scroll = ScrollView(this)
+        val body = column().apply { setPadding(dp(16), dp(12), dp(16), dp(18)) }
+        val header = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        header.addView(button("‹", panel2) { showHome() }, LinearLayout.LayoutParams(dp(54), dp(48)))
+        header.addView(TextView(this).apply {
+            text = "Multi-Track Studio"; textSize = 22f; setTextColor(Color.WHITE)
+            setTypeface(null, android.graphics.Typeface.BOLD); setPadding(dp(10), 0, 0, 0)
+        }, LinearLayout.LayoutParams(0, -2, 1f))
+        body.addView(header, matchWrap())
+        body.addView(TextView(this).apply {
+            text = "Layer music, vocals and sound effects. Set each clip's start position and volume, preview the arrangement and export one mixed file."
+            textSize = 13f; setTextColor(Color.LTGRAY); setPadding(0, dp(12), 0, dp(14))
+        }, matchWrap())
+        body.addView(button("＋  ADD AUDIO TRACKS", blue) {
+            val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE); type = "audio/*"
+                putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
+            }
+            mixPicker.launch(intent)
+        }, buttonParams())
+        section(body, "TIMELINE & TRACK CONTROLS")
+        mixRows = column()
+        body.addView(mixRows, matchWrap())
+        renderMixRows()
+        body.addView(button("▶  RENDER MIX PREVIEW", panel2) { renderMix(true) }, buttonParams())
+        body.addView(button("EXPORT MIX", purple) { showMixExportDialog() }, buttonParams())
+        mixStatus = TextView(this).apply {
+            text = "Add at least two audio files to create a mix."
+            textSize = 13f; gravity = Gravity.CENTER; setTextColor(cyan); setPadding(0, dp(12), 0, dp(8))
+        }
+        body.addView(mixStatus, matchWrap())
+        scroll.addView(body)
+        root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
+        attachBanner(root)
+        setContentView(root)
+    }
+
+    private fun renderMixRows() {
+        val container = mixRows ?: return
+        container.removeAllViews()
+        mixTracks.forEachIndexed { index, track ->
+            val card = column().apply { setPadding(dp(12), dp(10), dp(12), dp(10)); background = rounded(panel, 14) }
+            val top = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+            top.addView(TextView(this).apply {
+                text = "TRACK ${index + 1}  •  ${track.name}"
+                textSize = 13f; setTextColor(Color.WHITE); setTypeface(null, android.graphics.Typeface.BOLD)
+            }, LinearLayout.LayoutParams(0, -2, 1f))
+            top.addView(button("×", panel2) { mixTracks.remove(track); renderMixRows() }, LinearLayout.LayoutParams(dp(42), dp(38)))
+            card.addView(top, matchWrap())
+            val offsetText = TextView(this).apply {
+                text = "Clip start: ${track.offsetMs / 1000.0}s"; textSize = 12f; setTextColor(cyan)
+            }
+            card.addView(offsetText, matchWrap())
+            val offset = SeekBar(this).apply {
+                max = 120; progress = (track.offsetMs / 1000).coerceIn(0, 120)
+                progressTintList = android.content.res.ColorStateList.valueOf(blue)
+                setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                    override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                        track.offsetMs = progress * 1000
+                        offsetText.text = "Clip start: ${progress}s"
+                    }
+                    override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+                    override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+                })
+            }
+            card.addView(offset, matchWrap())
+            val gainText = TextView(this).apply {
+                text = "Track volume: ${track.gain}%"; textSize = 12f; setTextColor(Color.LTGRAY)
+            }
+            card.addView(gainText, matchWrap())
+            val gain = SeekBar(this).apply {
+                max = 150; progress = track.gain
+                progressTintList = android.content.res.ColorStateList.valueOf(cyan)
+                setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                    override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                        track.gain = progress; gainText.text = "Track volume: ${progress}%"
+                    }
+                    override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+                    override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+                })
+            }
+            card.addView(gain, matchWrap())
+            container.addView(card, matchWrap())
+            if (index < mixTracks.lastIndex) container.addView(View(this), LinearLayout.LayoutParams(1, dp(8)))
+        }
+    }
+
+    private fun showMixExportDialog() {
+        if (mixTracks.size < 2) { toast("Add at least two audio tracks."); return }
+        val name = EditText(this).apply { setText("My_Mix"); setSingleLine(true); setTextColor(Color.WHITE) }
+        val format = Spinner(this).apply {
+            adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, listOf("MP3", "WAV", "M4A (AAC)", "FLAC"))
+        }
+        val quality = Spinner(this).apply {
+            adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, listOf("128 kbps", "192 kbps", "256 kbps", "320 kbps")); setSelection(1)
+        }
+        val form = column().apply {
+            setPadding(dp(18), dp(8), dp(18), dp(8))
+            addView(TextView(this@MainActivity).apply { text = "FILE NAME"; setTextColor(Color.LTGRAY) })
+            addView(name, matchWrap())
+            addView(TextView(this@MainActivity).apply { text = "FORMAT"; setTextColor(Color.LTGRAY) })
+            addView(format, matchWrap())
+            addView(TextView(this@MainActivity).apply { text = "QUALITY"; setTextColor(Color.LTGRAY) })
+            addView(quality, matchWrap())
+        }
+        val dialog = AlertDialog.Builder(this).setTitle("Export mixed audio").setView(form)
+            .setNegativeButton("CANCEL", null).setPositiveButton("EXPORT", null).create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val safe = name.text.toString().trim().replace(Regex("[^A-Za-z0-9 _-]"), "_")
+                if (safe.isBlank()) { name.error = "Enter a file name"; return@setOnClickListener }
+                val ext = listOf("mp3", "wav", "m4a", "flac")[format.selectedItemPosition]
+                val rate = listOf("128k", "192k", "256k", "320k")[quality.selectedItemPosition]
+                dialog.dismiss()
+                renderMix(false, ext, rate, safe)
+            }
+        }
+        dialog.show()
+    }
+
+    private fun renderMix(preview: Boolean, ext: String = "mp3", rate: String = "192k", fileName: String = "My_Mix") {
+        if (mixTracks.size < 2) { toast("Add at least two audio tracks."); return }
+        val output = File(cacheDir, "mixed_${System.currentTimeMillis()}.${if (preview) "mp3" else ext}")
+        val inputs = mutableListOf<File>()
+        mixStatus?.text = "Preparing ${mixTracks.size} audio tracks…"
+        Thread {
+            try {
+                val args = mutableListOf("-y")
+                mixTracks.forEachIndexed { i, track ->
+                    val input = File(cacheDir, "mix_input_${System.currentTimeMillis()}_$i")
+                    contentResolver.openInputStream(track.uri).use { stream ->
+                        requireNotNull(stream) { "Could not read ${track.name}" }
+                        FileOutputStream(input).use { stream.copyTo(it) }
+                    }
+                    inputs.add(input)
+                    args.addAll(listOf("-i", input.absolutePath))
+                }
+                val filters = mutableListOf<String>()
+                mixTracks.forEachIndexed { i, track ->
+                    filters.add("[$i:a]adelay=${track.offsetMs}|${track.offsetMs},volume=${track.gain / 100.0}[a$i]")
+                }
+                val labels = mixTracks.indices.joinToString("") { "[a$it]" }
+                filters.add("${labels}amix=inputs=${mixTracks.size}:duration=longest:dropout_transition=2:normalize=0[out]")
+                args.addAll(listOf("-filter_complex", filters.joinToString(";"), "-map", "[out]"))
+                when (if (preview) "mp3" else ext) {
+                    "wav" -> args.addAll(listOf("-codec:a", "pcm_s16le"))
+                    "m4a" -> args.addAll(listOf("-codec:a", "aac", "-b:a", rate))
+                    "flac" -> args.addAll(listOf("-codec:a", "flac"))
+                    else -> args.addAll(listOf("-codec:a", "libmp3lame", "-b:a", if (preview) "192k" else rate))
+                }
+                args.add(output.absolutePath)
+                val session = FFmpegKit.execute(args.joinToString(" ") { quote(it) })
+                if (!ReturnCode.isSuccess(session.returnCode) || !output.exists() || output.length() == 0L) {
+                    throw IllegalStateException("The audio tracks could not be mixed.")
+                }
+                runOnUiThread {
+                    if (preview) {
+                        val previewPlayer = MediaPlayer()
+                        previewPlayer.setDataSource(output.absolutePath)
+                        previewPlayer.setOnPreparedListener { it.start(); mixStatus?.text = "Playing mix preview." }
+                        previewPlayer.setOnCompletionListener { it.release(); output.delete(); mixStatus?.text = "Preview finished." }
+                        previewPlayer.prepareAsync()
+                    } else {
+                        pendingExport?.delete()
+                        pendingExport = output
+                        pendingOutputName = fileName
+                        mixStatus?.text = "Mix ready. Complete the save step."
+                        showPendingSaveDialog("$fileName.$ext")
+                    }
+                }
+            } catch (e: Exception) {
+                output.delete()
+                runOnUiThread { mixStatus?.text = "Mix failed: ${e.message ?: "Check your audio files."}" }
+            } finally { inputs.forEach { it.delete() } }
+        }.start()
+    }
+
     private fun addPlayer(parent: LinearLayout) {
         val card = column().apply { setPadding(dp(14), dp(12), dp(14), dp(12)); background = rounded(panel, 18) }
         playerTime = TextView(this).apply { text = "00:00 / 00:00"; textSize = 14f; setTextColor(Color.WHITE); gravity = Gravity.CENTER }
@@ -399,7 +852,11 @@ class MainActivity : ComponentActivity() {
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                     if (fromUser && playerPrepared) {
-                        try { player?.seekTo(progress); playerTime.text = "${timeText(progress)} / ${timeText(player?.duration ?: 0)}" } catch (_: Exception) {}
+                        try {
+                            player?.seekTo(progress)
+                            playerTime.text = "${timeText(progress)} / ${timeText(player?.duration ?: 0)}"
+                            if (::waveform.isInitialized) waveform.setPlayhead(progress / 1000.0)
+                        } catch (_: Exception) {}
                     }
                 }
                 override fun onStartTrackingTouch(seekBar: SeekBar?) {}
@@ -443,8 +900,7 @@ class MainActivity : ComponentActivity() {
         form.addView(qualitySpinner, matchWrap())
         val dialog = AlertDialog.Builder(this)
             .setTitle("Save as")
-            .setView(form)
-            .setNegativeButton("CANCEL", null)
+            .setView(form)            .setNegativeButton("CANCEL", null)
             .setPositiveButton("CONVERT", null)
             .create()
         dialog.setOnShowListener {
@@ -476,7 +932,7 @@ class MainActivity : ComponentActivity() {
                     FileOutputStream(input).use { stream.copyTo(it) }
                 }
                 val args = mutableListOf("-y")
-                if (tool == "trim" || tool == "split") {
+                if (tool == "trim" || tool == "split" || tool == "ringtone") {
                     val start = if (::startTime.isInitialized) startTime.text.toString().toDoubleOrNull() ?: 0.0 else 0.0
                     val end = if (::endTime.isInitialized) endTime.text.toString().toDoubleOrNull() else null
                     if (start < 0 || end == null || end <= start) {
@@ -494,7 +950,24 @@ class MainActivity : ComponentActivity() {
                     "flac" -> args.addAll(listOf("-codec:a", "flac"))
                 }
                 if (tool == "compress") args.addAll(listOf("-ac", "2", "-ar", "44100"))
-                if (tool == "volume") args.addAll(listOf("-af", "volume=${(volumePercent.coerceAtLeast(10) / 100.0)}"))
+                val filters = mutableListOf<String>()
+                if (tool == "volume") filters.add("volume=${(volumePercent.coerceAtLeast(10) / 100.0)}")
+                if (tool == "voice") {
+                    when (selectedVoiceEffect) {
+                        "Deep Voice" -> filters.add("asetrate=44100*0.82,aresample=44100")
+                        "High Pitch" -> filters.add("asetrate=44100*1.22,aresample=44100")
+                        "Robot" -> filters.add("aecho=0.8:0.88:60:0.4")
+                        "Echo" -> filters.add("aecho=0.8:0.7:900:0.35")
+                    }
+                }
+                if (tool == "equalizer") {
+                    val frequencies = listOf(31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000)
+                    frequencies.forEachIndexed { index, frequency ->
+                        val gain = equalizerGains[index]
+                        if (gain != 0) filters.add("equalizer=f=$frequency:width_type=o:width=1:g=$gain")
+                    }
+                }
+                if (filters.isNotEmpty()) args.addAll(listOf("-af", filters.joinToString(",")))
                 args.add(output.absolutePath)
                 runOnUiThread { status.text = "Converting… please keep the app open." }
                 val session = FFmpegKit.execute(args.joinToString(" ") { quote(it) })
@@ -513,7 +986,9 @@ class MainActivity : ComponentActivity() {
             } catch (e: Exception) {
                 output.delete()
                 runOnUiThread { status.text = "Error: ${e.message ?: "Could not read this file."}" }
-            } finally { input.delete() }
+            } finally {
+                input.delete()
+            }
         }.start()
     }
 
@@ -700,10 +1175,10 @@ class MainActivity : ComponentActivity() {
                     lastDurationMs = mp.duration
                     if (::playerSeek.isInitialized) { playerSeek.max = mp.duration.coerceAtLeast(1); playerSeek.progress = 0 }
                     if (::playerTime.isInitialized) playerTime.text = "00:00 / ${timeText(mp.duration)}"
+                    if (::waveform.isInitialized) waveform.setPlayhead(0.0)
                     if (::status.isInitialized) status.text = "Player ready. Press play to listen."
                 }
-                setOnCompletionListener { mp ->
-                    if (::status.isInitialized) status.text = "Playback finished."
+                setOnCompletionListener { mp ->                    if (::status.isInitialized) status.text = "Playback finished."
                     try { mp.seekTo(0); if (::playerSeek.isInitialized) playerSeek.progress = 0 } catch (_: Exception) {}
                 }
                 prepareAsync()
@@ -793,7 +1268,7 @@ class MainActivity : ComponentActivity() {
 
     private fun showAppOpenIfReady() {
         val ad = appOpen ?: return
-        if (isFinishing || showingAppOpen) return
+        if (isFinishing || showingAppOpen || splashVisible) return
         appOpen = null
         showingAppOpen = true
         ad.fullScreenContentCallback = object : FullScreenContentCallback() {
