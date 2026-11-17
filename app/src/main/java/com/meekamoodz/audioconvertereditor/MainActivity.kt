@@ -583,6 +583,189 @@ class MainActivity : ComponentActivity() {
         setContentView(root)
     }
 
+
+    private fun showMultiTrackStudio() {
+        activeTool = "multitrack"
+        stopPlayer()
+        val root = baseRoot()
+        val scroll = ScrollView(this)
+        val body = column().apply { setPadding(dp(16), dp(12), dp(16), dp(18)) }
+        val header = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        header.addView(button("‹", panel2) { showHome() }, LinearLayout.LayoutParams(dp(54), dp(48)))
+        header.addView(TextView(this).apply {
+            text = "Multi-Track Studio"; textSize = 22f; setTextColor(Color.WHITE)
+            setTypeface(null, android.graphics.Typeface.BOLD); setPadding(dp(10), 0, 0, 0)
+        }, LinearLayout.LayoutParams(0, -2, 1f))
+        body.addView(header, matchWrap())
+        body.addView(TextView(this).apply {
+            text = "Layer music, vocals and sound effects. Set each clip's start position and volume, preview the arrangement and export one mixed file."
+            textSize = 13f; setTextColor(Color.LTGRAY); setPadding(0, dp(12), 0, dp(14))
+        }, matchWrap())
+        body.addView(button("＋  ADD AUDIO TRACKS", blue) {
+            val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE); type = "audio/*"
+                putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
+            }
+            mixPicker.launch(intent)
+        }, buttonParams())
+        section(body, "TIMELINE & TRACK CONTROLS")
+        mixRows = column()
+        body.addView(mixRows, matchWrap())
+        renderMixRows()
+        body.addView(button("▶  RENDER MIX PREVIEW", panel2) { renderMix(true) }, buttonParams())
+        body.addView(button("EXPORT MIX", purple) { showMixExportDialog() }, buttonParams())
+        mixStatus = TextView(this).apply {
+            text = "Add at least two audio files to create a mix."
+            textSize = 13f; gravity = Gravity.CENTER; setTextColor(cyan); setPadding(0, dp(12), 0, dp(8))
+        }
+        body.addView(mixStatus, matchWrap())
+        scroll.addView(body)
+        root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
+        attachBanner(root)
+        setContentView(root)
+    }
+
+    private fun renderMixRows() {
+        val container = mixRows ?: return
+        container.removeAllViews()
+        mixTracks.forEachIndexed { index, track ->
+            val card = column().apply { setPadding(dp(12), dp(10), dp(12), dp(10)); background = rounded(panel, 14) }
+            val top = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+            top.addView(TextView(this).apply {
+                text = "TRACK ${index + 1}  •  ${track.name}"
+                textSize = 13f; setTextColor(Color.WHITE); setTypeface(null, android.graphics.Typeface.BOLD)
+            }, LinearLayout.LayoutParams(0, -2, 1f))
+            top.addView(button("×", panel2) { mixTracks.remove(track); renderMixRows() }, LinearLayout.LayoutParams(dp(42), dp(38)))
+            card.addView(top, matchWrap())
+            val offsetText = TextView(this).apply {
+                text = "Clip start: ${track.offsetMs / 1000.0}s"; textSize = 12f; setTextColor(cyan)
+            }
+            card.addView(offsetText, matchWrap())
+            val offset = SeekBar(this).apply {
+                max = 120; progress = (track.offsetMs / 1000).coerceIn(0, 120)
+                progressTintList = android.content.res.ColorStateList.valueOf(blue)
+                setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                    override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                        track.offsetMs = progress * 1000
+                        offsetText.text = "Clip start: ${progress}s"
+                    }
+                    override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+                    override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+                })
+            }
+            card.addView(offset, matchWrap())
+            val gainText = TextView(this).apply {
+                text = "Track volume: ${track.gain}%"; textSize = 12f; setTextColor(Color.LTGRAY)
+            }
+            card.addView(gainText, matchWrap())
+            val gain = SeekBar(this).apply {
+                max = 150; progress = track.gain
+                progressTintList = android.content.res.ColorStateList.valueOf(cyan)
+                setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                    override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                        track.gain = progress; gainText.text = "Track volume: ${progress}%"
+                    }
+                    override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+                    override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+                })
+            }
+            card.addView(gain, matchWrap())
+            container.addView(card, matchWrap())
+            if (index < mixTracks.lastIndex) container.addView(View(this), LinearLayout.LayoutParams(1, dp(8)))
+        }
+    }
+
+    private fun showMixExportDialog() {
+        if (mixTracks.size < 2) { toast("Add at least two audio tracks."); return }
+        val name = EditText(this).apply { setText("My_Mix"); setSingleLine(true); setTextColor(Color.WHITE) }
+        val format = Spinner(this).apply {
+            adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, listOf("MP3", "WAV", "M4A (AAC)", "FLAC"))
+        }
+        val quality = Spinner(this).apply {
+            adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, listOf("128 kbps", "192 kbps", "256 kbps", "320 kbps")); setSelection(1)
+        }
+        val form = column().apply {
+            setPadding(dp(18), dp(8), dp(18), dp(8))
+            addView(TextView(this@MainActivity).apply { text = "FILE NAME"; setTextColor(Color.LTGRAY) })
+            addView(name, matchWrap())
+            addView(TextView(this@MainActivity).apply { text = "FORMAT"; setTextColor(Color.LTGRAY) })
+            addView(format, matchWrap())
+            addView(TextView(this@MainActivity).apply { text = "QUALITY"; setTextColor(Color.LTGRAY) })
+            addView(quality, matchWrap())
+        }
+        val dialog = AlertDialog.Builder(this).setTitle("Export mixed audio").setView(form)
+            .setNegativeButton("CANCEL", null).setPositiveButton("EXPORT", null).create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val safe = name.text.toString().trim().replace(Regex("[^A-Za-z0-9 _-]"), "_")
+                if (safe.isBlank()) { name.error = "Enter a file name"; return@setOnClickListener }
+                val ext = listOf("mp3", "wav", "m4a", "flac")[format.selectedItemPosition]
+                val rate = listOf("128k", "192k", "256k", "320k")[quality.selectedItemPosition]
+                dialog.dismiss()
+                renderMix(false, ext, rate, safe)
+            }
+        }
+        dialog.show()
+    }
+
+    private fun renderMix(preview: Boolean, ext: String = "mp3", rate: String = "192k", fileName: String = "My_Mix") {
+        if (mixTracks.size < 2) { toast("Add at least two audio tracks."); return }
+        val output = File(cacheDir, "mixed_${System.currentTimeMillis()}.${if (preview) "mp3" else ext}")
+        val inputs = mutableListOf<File>()
+        mixStatus?.text = "Preparing ${mixTracks.size} audio tracks…"
+        Thread {
+            try {
+                val args = mutableListOf("-y")
+                mixTracks.forEachIndexed { i, track ->
+                    val input = File(cacheDir, "mix_input_${System.currentTimeMillis()}_$i")
+                    contentResolver.openInputStream(track.uri).use { stream ->
+                        requireNotNull(stream) { "Could not read ${track.name}" }
+                        FileOutputStream(input).use { stream.copyTo(it) }
+                    }
+                    inputs.add(input)
+                    args.addAll(listOf("-i", input.absolutePath))
+                }
+                val filters = mutableListOf<String>()
+                mixTracks.forEachIndexed { i, track ->
+                    filters.add("[$i:a]adelay=${track.offsetMs}|${track.offsetMs},volume=${track.gain / 100.0}[a$i]")
+                }
+                val labels = mixTracks.indices.joinToString("") { "[a$it]" }
+                filters.add("${labels}amix=inputs=${mixTracks.size}:duration=longest:dropout_transition=2:normalize=0[out]")
+                args.addAll(listOf("-filter_complex", filters.joinToString(";"), "-map", "[out]"))
+                when (if (preview) "mp3" else ext) {
+                    "wav" -> args.addAll(listOf("-codec:a", "pcm_s16le"))
+                    "m4a" -> args.addAll(listOf("-codec:a", "aac", "-b:a", rate))
+                    "flac" -> args.addAll(listOf("-codec:a", "flac"))
+                    else -> args.addAll(listOf("-codec:a", "libmp3lame", "-b:a", if (preview) "192k" else rate))
+                }
+                args.add(output.absolutePath)
+                val session = FFmpegKit.execute(args.joinToString(" ") { quote(it) })
+                if (!ReturnCode.isSuccess(session.returnCode) || !output.exists() || output.length() == 0L) {
+                    throw IllegalStateException("The audio tracks could not be mixed.")
+                }
+                runOnUiThread {
+                    if (preview) {
+                        val previewPlayer = MediaPlayer()
+                        previewPlayer.setDataSource(output.absolutePath)
+                        previewPlayer.setOnPreparedListener { it.start(); mixStatus?.text = "Playing mix preview." }
+                        previewPlayer.setOnCompletionListener { it.release(); output.delete(); mixStatus?.text = "Preview finished." }
+                        previewPlayer.prepareAsync()
+                    } else {
+                        pendingExport?.delete()
+                        pendingExport = output
+                        pendingOutputName = fileName
+                        mixStatus?.text = "Mix ready. Complete the save step."
+                        showPendingSaveDialog("$fileName.$ext")
+                    }
+                }
+            } catch (e: Exception) {
+                output.delete()
+                runOnUiThread { mixStatus?.text = "Mix failed: ${e.message ?: "Check your audio files."}" }
+            } finally { inputs.forEach { it.delete() } }
+        }.start()
+    }
+
     private fun addPlayer(parent: LinearLayout) {
         val card = column().apply { setPadding(dp(14), dp(12), dp(14), dp(12)); background = rounded(panel, 18) }
         playerTime = TextView(this).apply { text = "00:00 / 00:00"; textSize = 14f; setTextColor(Color.WHITE); gravity = Gravity.CENTER }
