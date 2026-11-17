@@ -22,6 +22,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.widget.*
 import androidx.activity.ComponentActivity
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import com.arthenica.ffmpegkit.FFmpegKit
 import com.arthenica.ffmpegkit.ReturnCode
@@ -249,6 +250,22 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         window.statusBarColor = bg
         window.navigationBarColor = bg
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                if (splashVisible) return
+                if (activeTool != "home") {
+                    stopPlayer()
+                    showHome()
+                    return
+                }
+                AlertDialog.Builder(this@MainActivity)
+                    .setTitle("Exit Audio Converter and Editor?")
+                    .setMessage("Do you want to close the app?")
+                    .setNegativeButton("STAY", null)
+                    .setPositiveButton("EXIT") { _, _ -> finish() }
+                    .show()
+            }
+        })
         MobileAds.initialize(this) {}
         loadInterstitial()
         loadRewarded()
