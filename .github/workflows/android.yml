@@ -35,12 +35,17 @@ jobs:
 
       - name: Prepare or restore encrypted upload signing key
         id: signing
-        if: github.event_name != 'pull_request' && secrets.UPLOAD_KEY_ENCRYPTION_PASSWORD != ''
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/release/play-store-preparation'
         shell: bash
         env:
           KEY_ENCRYPTION_PASSWORD: ${{ secrets.UPLOAD_KEY_ENCRYPTION_PASSWORD }}
         run: |
           set -euo pipefail
+          if [ -z "$KEY_ENCRYPTION_PASSWORD" ]; then
+            echo "UPLOAD_KEY_ENCRYPTION_PASSWORD is not set; this run will create an unsigned verification bundle only."
+            echo "has_signing=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           KEY_DIR="$GITHUB_WORKSPACE/.github/keys"
           ENCRYPTED_KEY="$KEY_DIR/audio-converter-upload.jks.enc"
           mkdir -p "$KEY_DIR"
