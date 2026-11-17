@@ -601,11 +601,12 @@ class MainActivity : ComponentActivity() {
         body.addView(button(if (tool == "video") "＋  SELECT VIDEO" else "＋  SELECT AUDIO", blue) { chooseFile() }, buttonParams())
         if (tool == "video") {
             section(body, "VIDEO PREVIEW")
-            videoPreview = VideoView(this).apply {
-                setBackgroundColor(Color.BLACK)
-                setMediaController(MediaController(this@MainActivity).apply { setAnchorView(this@apply) })
-            }
-            body.addView(videoPreview, LinearLayout.LayoutParams(-1, dp(220)).apply { topMargin = dp(4); bottomMargin = dp(10) })
+            val preview = VideoView(this).apply { setBackgroundColor(Color.BLACK) }
+            val controller = MediaController(this)
+            controller.setAnchorView(preview)
+            preview.setMediaController(controller)
+            videoPreview = preview
+            body.addView(preview, LinearLayout.LayoutParams(-1, dp(220)).apply { topMargin = dp(4); bottomMargin = dp(10) })
             selectedUri?.let { videoPreview?.setVideoURI(it) }
             section(body, "OUTPUT SETTINGS")
             body.addView(TextView(this).apply {
@@ -1458,6 +1459,7 @@ class MainActivity : ComponentActivity() {
     private fun toast(message: String) = Toast.makeText(this, message, Toast.LENGTH_LONG).show()
     private fun stopPlayer() {
         try { player?.pause() } catch (_: Exception) {}
+        try { videoPreview?.pause() } catch (_: Exception) {}
         handler.removeCallbacks(tick)
     }
 
