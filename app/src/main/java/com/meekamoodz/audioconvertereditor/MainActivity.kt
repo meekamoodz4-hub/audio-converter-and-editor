@@ -393,15 +393,6 @@ class MainActivity : ComponentActivity() {
             setTextColor(Color.rgb(145, 184, 224))
         }, matchWrap())
         top.addView(brand, LinearLayout.LayoutParams(0, -2, 1f))
-        top.addView(TextView(this).apply {
-            text = "PRO"
-            textSize = 10f
-            letterSpacing = 0.12f
-            gravity = Gravity.CENTER
-            setTextColor(Color.WHITE)
-            background = rounded(purple, 18)
-            setPadding(dp(12), dp(7), dp(12), dp(7))
-        }, matchWrap())
         body.addView(top, matchWrap())
 
         val hero = column().apply {
