@@ -162,6 +162,11 @@ class MainActivity : ComponentActivity() {
     private var updatingSeek = false
     private var lastDurationMs = 0
     private var selectedVoiceEffect = "Normal"
+    private data class MixTrack(val uri: Uri, val name: String, var offsetMs: Int = 0, var gain: Int = 100)
+    private val mixTracks = mutableListOf<MixTrack>()
+    private var mixRows: LinearLayout? = null
+    private var mixStatus: TextView? = null
+
     private var equalizerPreset = "Flat"
     private val equalizerGains = MutableList(10) { 0 }
 
@@ -174,6 +179,21 @@ class MainActivity : ComponentActivity() {
             try { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) {}
             if (::waveform.isInitialized) loadWaveform(uri)
             preparePlayer(uri)
+        }
+    }
+
+
+    private val mixPicker = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val data = result.data
+            val uris = mutableListOf<Uri>()
+            data?.clipData?.let { clip -> for (i in 0 until clip.itemCount) uris.add(clip.getItemAt(i).uri) }
+            if (uris.isEmpty()) data?.data?.let { uris.add(it) }
+            uris.forEach { uri ->
+                try { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) {}
+                mixTracks.add(MixTrack(uri, queryName(uri) ?: "Audio ${mixTracks.size + 1}"))
+            }
+            renderMixRows()
         }
     }
 
@@ -314,6 +334,7 @@ class MainActivity : ComponentActivity() {
         section(body, "AUDIO EDITOR")
         val first = listOf(
             Triple("✂", "Trim Audio", "trim"),
+            Triple("▥", "Multi-Track Studio", "multitrack"),
             Triple("◖))", "Volume Booster", "volume")
         )
         addTileGrid(body, first)
@@ -388,6 +409,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun openTool(tool: String, title: String) {
+        if (tool == "multitrack") { showMultiTrackStudio(); return }
         activeTool = tool
         val root = baseRoot()
         val scroll = ScrollView(this)
