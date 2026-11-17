@@ -45,8 +45,11 @@ private class AudioWaveformView(context: android.content.Context) : View(context
     private var durationSeconds = 0.0
     private var startSeconds = 0.0
     private var endSeconds = 0.0
-    private var dragStart = false
+    private var playheadSeconds = 0.0
+    private var dragMode = DragMode.PLAYHEAD
+    private enum class DragMode { START, END, PLAYHEAD }
     var onSelectionChanged: ((Double, Double) -> Unit)? = null
+    var onPlayheadChanged: ((Double) -> Unit)? = null
 
     init {
         barPaint.color = Color.rgb(40, 165, 250)
@@ -60,8 +63,14 @@ private class AudioWaveformView(context: android.content.Context) : View(context
         durationSeconds = duration.coerceAtLeast(0.01)
         startSeconds = 0.0
         endSeconds = durationSeconds
+        playheadSeconds = 0.0
         invalidate()
         onSelectionChanged?.invoke(startSeconds, endSeconds)
+    }
+
+    fun setPlayhead(seconds: Double) {
+        playheadSeconds = seconds.coerceIn(0.0, durationSeconds.coerceAtLeast(0.0))
+        invalidate()
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -77,21 +86,30 @@ private class AudioWaveformView(context: android.content.Context) : View(context
         }
         val sx = (startSeconds / durationSeconds).toFloat().coerceIn(0f, 1f) * w
         val ex = (endSeconds / durationSeconds).toFloat().coerceIn(0f, 1f) * w
+        val px = (playheadSeconds / durationSeconds).toFloat().coerceIn(0f, 1f) * w
         canvas.drawRect(sx, 0f, ex, h, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(36, 40, 165, 250) })
         val step = w / levels.size.coerceAtLeast(1)
         val bw = (step * 0.48f).coerceAtLeast(1f)
         levels.forEachIndexed { index, level ->
             val x = index * step + (step - bw) / 2f
-            val bh = (level.coerceIn(0.025f, 1f) * h * 0.82f).coerceAtLeast(3f)
-            barPaint.color = if (x >= sx && x <= ex) Color.rgb(40, 165, 250) else Color.rgb(76, 91, 148)
+            val bh = (level.coerceIn(0.025f, 1f) * h * 0.72f).coerceAtLeast(3f)
+            barPaint.color = if (x >= sx && x <= ex) Color.rgb(40, 190, 235) else Color.rgb(76, 91, 148)
             canvas.drawRoundRect(x, (h - bh) / 2f, x + bw, (h + bh) / 2f, bw / 2f, bw / 2f, barPaint)
         }
-        handlePaint.color = Color.rgb(40, 165, 250)
-        canvas.drawRoundRect(sx - 3f, 0f, sx + 3f, h, 3f, 3f, handlePaint)
-        handlePaint.color = Color.rgb(249, 115, 22)
-        canvas.drawRoundRect(ex - 3f, 0f, ex + 3f, h, 3f, 3f, handlePaint)
-        canvas.drawCircle(sx, h * 0.12f, 9f, handlePaint)
-        canvas.drawCircle(ex, h * 0.12f, 9f, handlePaint)
+        handlePaint.color = Color.rgb(40, 220, 160)
+        canvas.drawRoundRect(sx - 4f, 0f, sx + 4f, h, 4f, 4f, handlePaint)
+        canvas.drawRoundRect(ex - 4f, 0f, ex + 4f, h, 4f, 4f, handlePaint)
+        canvas.drawCircle(sx, h * 0.12f, 10f, handlePaint)
+        canvas.drawCircle(ex, h * 0.12f, 10f, handlePaint)
+        handlePaint.color = Color.rgb(255, 190, 70)
+        canvas.drawLine(px, 0f, px, h, handlePaint.apply { strokeWidth = 3.5f })
+        canvas.drawCircle(px, h * 0.5f, 8f, handlePaint)
+        textPaint.textAlign = Paint.Align.CENTER
+        textPaint.textSize = 10f * resources.displayMetrics.density
+        textPaint.color = Color.rgb(255, 210, 120)
+        canvas.drawText("PLAYHEAD", px.coerceIn(38f, w - 38f), h - 7f, textPaint)
+        textPaint.color = Color.WHITE
+        textPaint.textSize = 26f
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
@@ -101,7 +119,14 @@ private class AudioWaveformView(context: android.content.Context) : View(context
             MotionEvent.ACTION_DOWN -> {
                 val sx = (startSeconds / durationSeconds).toFloat() * width
                 val ex = (endSeconds / durationSeconds).toFloat() * width
-                dragStart = abs(x - sx) <= abs(x - ex)
+                val px = (playheadSeconds / durationSeconds).toFloat() * width
+                dragMode = if (event.y < height * 0.32f) {
+                    if (abs(x - sx) <= abs(x - ex)) DragMode.START else DragMode.END
+                } else {
+                    if (abs(x - sx) < dp(18f) && abs(x - sx) <= abs(x - px)) DragMode.START
+                    else if (abs(x - ex) < dp(18f) && abs(x - ex) < abs(x - px)) DragMode.END
+                    else DragMode.PLAYHEAD
+                }
                 parent?.requestDisallowInterceptTouchEvent(true)
                 updateFromX(x)
                 return true
@@ -119,12 +144,19 @@ private class AudioWaveformView(context: android.content.Context) : View(context
 
     private fun updateFromX(x: Float) {
         val t = (x / width.toFloat()).coerceIn(0f, 1f) * durationSeconds
-        if (dragStart) startSeconds = t.coerceAtMost(endSeconds - 0.05).coerceAtLeast(0.0)
-        else endSeconds = t.coerceAtLeast(startSeconds + 0.05).coerceAtMost(durationSeconds)
+        when (dragMode) {
+            DragMode.START -> startSeconds = t.coerceAtMost(endSeconds - 0.05).coerceAtLeast(0.0)
+            DragMode.END -> endSeconds = t.coerceAtLeast(startSeconds + 0.05).coerceAtMost(durationSeconds)
+            DragMode.PLAYHEAD -> {
+                playheadSeconds = t
+                onPlayheadChanged?.invoke(playheadSeconds)
+            }
+        }
         invalidate()
         onSelectionChanged?.invoke(startSeconds, endSeconds)
     }
 
+    private fun dp(value: Float) = value * resources.displayMetrics.density
     override fun performClick(): Boolean { super.performClick(); return true }
 }
 
@@ -207,7 +239,8 @@ class MainActivity : ComponentActivity() {
                 playerSeek.progress = pos
                 updatingSeek = false
                 playerTime.text = "${timeText(pos)} / ${timeText(p.duration)}"
-                handler.postDelayed(this, 350)
+                if (::waveform.isInitialized) waveform.setPlayhead(pos / 1000.0)
+                handler.postDelayed(this, 120)
             }
         }
     }
@@ -461,6 +494,11 @@ class MainActivity : ComponentActivity() {
             waveform.onSelectionChanged = { start, end ->
                 startTime.setText(String.format(Locale.US, "%.2f", start))
                 endTime.setText(String.format(Locale.US, "%.2f", end))
+            }
+            waveform.onPlayheadChanged = { seconds ->
+                if (playerPrepared) {
+                    try { player?.seekTo((seconds * 1000.0).toInt()) } catch (_: Exception) {}
+                }
             }
             body.addView(waveform, LinearLayout.LayoutParams(-1, dp(190)).apply { topMargin = dp(12); bottomMargin = dp(8) })
             selectedUri?.let { loadWaveform(it) }
@@ -797,7 +835,11 @@ class MainActivity : ComponentActivity() {
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                     if (fromUser && playerPrepared) {
-                        try { player?.seekTo(progress); playerTime.text = "${timeText(progress)} / ${timeText(player?.duration ?: 0)}" } catch (_: Exception) {}
+                        try {
+                            player?.seekTo(progress)
+                            playerTime.text = "${timeText(progress)} / ${timeText(player?.duration ?: 0)}"
+                            if (::waveform.isInitialized) waveform.setPlayhead(progress / 1000.0)
+                        } catch (_: Exception) {}
                     }
                 }
                 override fun onStartTrackingTouch(seekBar: SeekBar?) {}
@@ -1116,6 +1158,7 @@ class MainActivity : ComponentActivity() {
                     lastDurationMs = mp.duration
                     if (::playerSeek.isInitialized) { playerSeek.max = mp.duration.coerceAtLeast(1); playerSeek.progress = 0 }
                     if (::playerTime.isInitialized) playerTime.text = "00:00 / ${timeText(mp.duration)}"
+                    if (::waveform.isInitialized) waveform.setPlayhead(0.0)
                     if (::status.isInitialized) status.text = "Player ready. Press play to listen."
                 }
                 setOnCompletionListener { mp ->                    if (::status.isInitialized) status.text = "Playback finished."
