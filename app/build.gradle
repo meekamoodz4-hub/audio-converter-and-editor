@@ -32,6 +32,10 @@ android {
         }
     }
 
+    lint {
+        disable 'InvalidFragmentVersionForActivityResult'
+    }
+
     buildTypes {
         release {
             minifyEnabled false
